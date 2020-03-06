@@ -5,5 +5,7 @@ We are using Blackrock Cerebus for M1 data recording and DSPW RCB module for EMG
 
 In previous versions of these codes, we tried to directly read Blackrock `.nev` files in `Python`, but it would take more than 30 minutes to read a single 15-minute file due to the inefficiency of Blackrock `BRPY` package. As an altenative solution, here we first convert Blackrock `.nev` files into MATLAB `.mat` files by using the codes under `./MATLAB/`, then read the `.mat` file in `Python`.
 
+The codes also include functions for semi-automatic artifacts rejection based on waveform features. The codes can also read data files with spike sorting results.
+
 ## Details about how to use these codes and designing concerns to be continued, check the examples first if you are interested
 
