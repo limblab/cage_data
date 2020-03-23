@@ -468,7 +468,10 @@ class cage_data:
             raw_data['ch_lbl'] = list()
             if hasattr(self, 'elec_id'):
                 for i, each in enumerate(raw_data['elec_id']):
-                    raw_data['ch_lbl'].append(self.ch_lbl[self.elec_id.index(each)])
+                    if each in self.elec_id:
+                        raw_data['ch_lbl'].append(self.ch_lbl[self.elec_id.index(each)])
+                    else:
+                        raw_data['ch_lbl'].append('No elec label')
             else:
                 raw_data['ch_lbl'] = 0
             raw_data['timeframe'] = np.arange(len(raw_data['data']))/raw_data['fs']
