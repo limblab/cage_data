@@ -5,10 +5,11 @@ import h5py
 import getpass
 import matplotlib.pyplot as plt
 import joblib
+import os
 from load_intan_rhd_format import read_data
 from scipy import stats, signal
 from intanutil.notch_filter import notch_filter
-from brpylib import NevFile 
+from brpylib import NevFile, NsxFile
 from scipy.signal import find_peaks
 
 memo1 = """Since Blackrock Python codes (brpy) are too slow when reading .nev files, we use MATLAB version of .nev files instead."""
@@ -69,6 +70,11 @@ class cage_data:
         self.is_spike_smoothed = False
         self.binned = {}
         self.pre_processing_summary()
+        self.raw_data = self.parse_ns6_file()
+        if self.raw_data != 0:
+            print('Raw data (fs = 30kHz) was recorded along with spike data in this session!')
+        else:
+            print('No raw data along with this recording session.')
         
     def pre_processing_summary(self):
         if hasattr(self, 'is_sorted'):
@@ -157,6 +163,7 @@ class cage_data:
         self.spikes = s_spikes
         self.waveforms = s_waveforms
         self.ch_lbl = ch_lbl
+        self.elec_id = elec_id
         
         if has_analog == 1:
            self.analog = {}
@@ -443,7 +450,42 @@ class cage_data:
                 plt.plot(np.mean(self.waveforms[N][: , :].T, axis = 1), 'k')
             plt.title(self.ch_lbl[N] +': '+ str( np.size(self.waveforms[N], 0) ) + ' good')            
         else:
-            print('Wrong number')        
+            print('Wrong number')
+            
+    def parse_ns6_file(self):
+        ns6_file_name = self.nev_mat_file[:-4]+'.ns6'
+        if os.path.exists(ns6_file_name) == False:
+            print('There is no .ns6 file along with this .nev file')
+            return 0
+        else:
+            ns6_file = NsxFile(ns6_file_name)
+            _raw_data = ns6_file.getdata()
+            ns6_file.close()
+            raw_data = dict()
+            raw_data['data'] = _raw_data['data'].T
+            raw_data['fs'] = _raw_data['samp_per_s']
+            raw_data['elec_id'] = _raw_data['elec_ids']
+            raw_data['ch_lbl'] = list()
+            if hasattr(self, 'elec_id'):
+                for i, each in enumerate(raw_data['elec_id']):
+                    raw_data['ch_lbl'].append(self.ch_lbl[self.elec_id.index(each)])
+            else:
+                raw_data['ch_lbl'] = 0
+            raw_data['timeframe'] = np.arange(len(raw_data['data']))/raw_data['fs']
+            return raw_data
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
         
         
         
