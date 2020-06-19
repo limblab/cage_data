@@ -43,11 +43,15 @@ class cage_data:
             self.nev_mat_file = ''.join((path, nev_mat_file))
             if self.has_EMG == 1:
                 self.rhd_file = ''.join((path, rhd_file))
+            else:
+                self.rhd_file = []
         else:
             self.nev_mat_file = ''.join((path, '/', nev_mat_file))
             if self.has_EMG == 1:
                 self.rhd_file = ''.join((path, '/', rhd_file))
-        self.parse_nev_mat_file(self.nev_mat_file, is_sorted, empty_channels, has_analog)
+            else:
+                self.rhd_file = []
+
         if self.has_EMG == 1:
             try:
                 self.date_num = int(rhd_file[:8])
@@ -61,8 +65,8 @@ class cage_data:
                                                                                     do_notch, bad_EMG)
             self.file_length = self.EMG_timeframe[-1]
             print(self.EMG_names)
-        else:
-            self.file_length = self.nev_duration
+            
+        self.parse_nev_mat_file(self.nev_mat_file, is_sorted, empty_channels, has_analog)
         
         self.is_cortical_cleaned = False
         self.is_EMG_filtered = False
@@ -82,11 +86,10 @@ class cage_data:
                 print('This is a sorted file')
             else:
                 print('This is a non-sorted file')
-        if hasattr(self, 'has_EMG'):
-            if self.has_EMG == 1:        
-                print('EMG filtered? -- %s' %(self.is_EMG_filtered))
-            else:
-                print('EMG filtered? -- %s' %('There is no EMG from DSPW system.'))
+        if hasattr(self, 'EMG_diff'):
+            print('EMG filtered? -- %s' %(self.is_EMG_filtered))
+        else:
+            print('EMG filtered? -- %s' %('There is no EMG from DSPW system.'))
         if hasattr(self, 'EMG_names'):
             print('EMG filtered? -- %s' %(self.is_EMG_filtered))
         print('Cortical data cleaned? -- %s' %(self.is_cortical_cleaned))
@@ -183,6 +186,10 @@ class cage_data:
                self.analog['video_sync'] = self.analog['analog_data'][:, self.analog['analog_lbl'].index('kinectSync')]
            else:
                print('No sync pulses!')
+           # If the rhd_file is empty, then check whether there is any EMG channel with Cerebus analog inputs
+           if not self.rhd_file:
+               self.check_EMG_in_cerebus_analog()   
+               self.file_length = self.nev_duration
         
         e = time.clock()
         print("%.3f s for parsing the nev-mat file" %(e-s))
@@ -430,13 +437,18 @@ class cage_data:
                     self.waveforms[i] = np.delete(self.waveforms[i], bad_idx, axis = 0)
                     self.spikes[i] = np.delete(self.spikes[i], bad_idx)
 
-    def plot_bad_waveforms(self, N):
+    def plot_bad_waveforms(self, N, plot_avg = 0):
         if N >= 0 | N < 100: 
             plt.figure(0, figsize = (6,6))
             ax = plt.subplot(111)
             ax.axis('off')
-            plt.plot(self.bad_waveforms[N][:, :].T, 'gray')
-            plt.title(self.ch_lbl[N] +': '+ str( np.size(self.bad_waveforms[N], 0) ) + ' bad')            
+            if len(self.bad_waveforms[N]) != 0:
+                plt.plot(self.bad_waveforms[N][:, :].T, 'gray')
+                plt.title(self.ch_lbl[N] +': '+ str( np.size(self.bad_waveforms[N], 0) ) + ' bad')
+                if plot_avg == 1:
+                    plt.plot(np.mean(self.bad_waveforms[N][: , :].T, axis = 1), 'k')
+            else:
+                print('No bad waveform at this channel')
         else:
             print('Wrong number')
         
@@ -445,10 +457,13 @@ class cage_data:
             plt.figure(0, figsize = (6,6))
             ax = plt.subplot(111)
             ax.axis('off')
-            plt.plot(self.waveforms[N][:, :].T, 'b', alpha = 0.5)
-            if plot_avg == 1:
-                plt.plot(np.mean(self.waveforms[N][: , :].T, axis = 1), 'k')
-            plt.title(self.ch_lbl[N] +': '+ str( np.size(self.waveforms[N], 0) ) + ' good')            
+            if len(self.waveforms[N]) != 0:
+                plt.plot(self.waveforms[N][:, :].T, 'g', alpha = 0.5)
+                plt.title(self.ch_lbl[N] +': '+ str( np.size(self.waveforms[N], 0) ) + ' good')
+                if plot_avg == 1:
+                    plt.plot(np.mean(self.waveforms[N][: , :].T, axis = 1), 'k')
+            else:
+                print('No good waveform at this channel')
         else:
             print('Wrong number')
             
@@ -476,6 +491,28 @@ class cage_data:
                 raw_data['ch_lbl'] = 0
             raw_data['timeframe'] = np.arange(len(raw_data['data']))/raw_data['fs']
             return raw_data
+    
+    def check_EMG_in_cerebus_analog(self):
+        idx = []
+        for i, lbl in enumerate(self.analog['analog_lbl']):
+            if 'EMG' in lbl:
+                idx.append(i)
+        if idx:
+            self.EMG_names, self.EMG_diff = [], []
+            for i in idx:
+                self.EMG_names.append(self.analog['analog_lbl'][i])
+                self.EMG_diff.append(self.analog['analog_data'][:, i])
+            self.EMG_timeframe = np.arange(len(self.EMG_diff[0]))/self.analog['analog_fs']
+            self.EMG_fs = self.analog['analog_fs']
+            print('This file contains EMG acquired by Cerebus system.')
+            print(self.EMG_names)
+            self.has_EMG = 1
+        
+                
+        
+        
+        
+        
             
             
             
