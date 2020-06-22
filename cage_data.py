@@ -508,7 +508,18 @@ class cage_data:
             print(self.EMG_names)
             self.has_EMG = 1
         
-                
+    def get_EMG_idx(self, EMG_list):
+        e_flag = False
+        if 'EMG' in self.EMG_names[0]:
+            e_flag = True
+        EMG_names = np.asarray(self.EMG_names)
+        
+        idx = []
+        for each in EMG_list:
+            if (e_flag == True)&('EMG' not in each):
+                each = 'EMG_' + each
+            idx.append(np.where(EMG_names == each)[0])
+        return np.asarray(idx).reshape((len(idx), ))           
         
         
         
