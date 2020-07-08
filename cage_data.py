@@ -201,7 +201,8 @@ class cage_data:
         else:
             self.EMG_fs = rhd_data['frequency_parameters']['amplifier_sample_rate']
         EMG_single = rhd_data['amplifier_data']
-        
+        if (self.date_num>20200301)&(self.date_num<20200630):
+            self.fix_Pop_EMG_2020_03_06(rhd_data)
         EMG_names_single = []
         for each in rhd_data['amplifier_channels']:
             EMG_names_single.append(each['custom_channel_name'])
@@ -507,7 +508,7 @@ class cage_data:
             print('This file contains EMG acquired by Cerebus system.')
             print(self.EMG_names)
             self.has_EMG = 1
-        
+            
     def get_EMG_idx(self, EMG_list):
         e_flag = False
         if 'EMG' in self.EMG_names[0]:
@@ -519,7 +520,20 @@ class cage_data:
             if (e_flag == True)&('EMG' not in each):
                 each = 'EMG_' + each
             idx.append(np.where(EMG_names == each)[0])
-        return np.asarray(idx).reshape((len(idx), ))           
+        return np.asarray(idx).reshape((len(idx), ))
+    
+    def fix_Pop_EMG_2020_03_06(self, rhd_data):
+        """
+        In Pop's dataset recorded during March and June, 2020, the label for 
+        FDS2_2 is mistakenly recorded as FDS2_1, this function is used to fix
+        this issue.
+        """
+        idx = rhd_data['amplifier_channels']['custom_channel_name'].index('FDS2_1', -1)
+        rhd_data['amplifier_channels']['custom_channel_name'][idx] = 'FDS2_2'
+        
+            
+        
+                
         
         
         
