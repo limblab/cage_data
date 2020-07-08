@@ -55,8 +55,8 @@ class cage_data:
         if self.has_EMG == 1:
             try:
                 self.date_num = int(rhd_file[:8])
-                self.date_num = 0
             except ValueError:
+                self.date_num = 0
                 print('Check the file name of the .rhd file!')
             else:
                 pass
@@ -201,11 +201,11 @@ class cage_data:
         else:
             self.EMG_fs = rhd_data['frequency_parameters']['amplifier_sample_rate']
         EMG_single = rhd_data['amplifier_data']
-        if (self.date_num>20200301)&(self.date_num<20200630):
-            self.fix_Pop_EMG_2020_03_06(rhd_data)
         EMG_names_single = []
         for each in rhd_data['amplifier_channels']:
             EMG_names_single.append(each['custom_channel_name'])
+        if (self.date_num>20200301)&(self.date_num<20200630):
+            EMG_names_single[28] = 'FDS2_2'
         # ---------- To get paired EMG channels for software diffrence ---------- #
         EMG_names, EMG_index1, EMG_index2 = self.get_paired_EMG_index(EMG_names_single)
 
@@ -522,14 +522,6 @@ class cage_data:
             idx.append(np.where(EMG_names == each)[0])
         return np.asarray(idx).reshape((len(idx), ))
     
-    def fix_Pop_EMG_2020_03_06(self, rhd_data):
-        """
-        In Pop's dataset recorded during March and June, 2020, the label for 
-        FDS2_2 is mistakenly recorded as FDS2_1, this function is used to fix
-        this issue.
-        """
-        idx = rhd_data['amplifier_channels']['custom_channel_name'].index('FDS2_1', -1)
-        rhd_data['amplifier_channels']['custom_channel_name'][idx] = 'FDS2_2'
         
             
         
