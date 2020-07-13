@@ -3,7 +3,6 @@ import _pickle as pickle
 import time
 import h5py
 import getpass
-import matplotlib.pyplot as plt
 import joblib
 import os
 from load_intan_rhd_format import read_data
@@ -437,36 +436,6 @@ class cage_data:
                     self.bad_waveforms.append(each[bad_idx, :])
                     self.waveforms[i] = np.delete(self.waveforms[i], bad_idx, axis = 0)
                     self.spikes[i] = np.delete(self.spikes[i], bad_idx)
-
-    def plot_bad_waveforms(self, N, plot_avg = 0):
-        if N >= 0 | N < 100: 
-            plt.figure(0, figsize = (6,6))
-            ax = plt.subplot(111)
-            ax.axis('off')
-            if len(self.bad_waveforms[N]) != 0:
-                plt.plot(self.bad_waveforms[N][:, :].T, 'gray')
-                plt.title(self.ch_lbl[N] +': '+ str( np.size(self.bad_waveforms[N], 0) ) + ' bad')
-                if plot_avg == 1:
-                    plt.plot(np.mean(self.bad_waveforms[N][: , :].T, axis = 1), 'k')
-            else:
-                print('No bad waveform at this channel')
-        else:
-            print('Wrong number')
-        
-    def plot_good_waveforms(self, N, plot_avg = 0):
-        if N >= 0 | N < 100: 
-            plt.figure(0, figsize = (6,6))
-            ax = plt.subplot(111)
-            ax.axis('off')
-            if len(self.waveforms[N]) != 0:
-                plt.plot(self.waveforms[N][:, :].T, 'g', alpha = 0.5)
-                plt.title(self.ch_lbl[N] +': '+ str( np.size(self.waveforms[N], 0) ) + ' good')
-                if plot_avg == 1:
-                    plt.plot(np.mean(self.waveforms[N][: , :].T, axis = 1), 'k')
-            else:
-                print('No good waveform at this channel')
-        else:
-            print('Wrong number')
             
     def parse_ns6_file(self):
         ns6_file_name = self.nev_mat_file[:-4]+'.ns6'
