@@ -3,8 +3,8 @@ import pickle
 """
 -------- Specify path and file name --------
 """
-path = './'
-pickle_filename = '20190304_Greyson_Cage_001.pkl'
+path = 'F:/test/'
+pickle_filename = '20200320_Pop_Cage_001.pkl'
 with open ( ''.join((path, pickle_filename)), 'rb' ) as fp:
     my_cage_data = pickle.load(fp)
 my_cage_data.pre_processing_summary()
