@@ -762,8 +762,8 @@ class cage_data:
             behave_dict['FSR_data'] = seg_fsrs
         return behave_dict                     
             
-    def get_all_data_segment(self, xls_path, xls_name, requires_raw_EMG = False, requires_spike_timing = False):
-        self.read_behavior_tags(xls_path, xls_name)
+    def get_all_data_segment(self, requires_raw_EMG = False, requires_spike_timing = False):
+        #self.read_behavior_tags(xls_path, xls_name)
         if hasattr(self, 'behave_tags') == True:
             tags = self.behave_tags
             behave_seg = []
@@ -775,7 +775,7 @@ class cage_data:
                 behave_seg.append(seg)
             return behave_seg
         else:
-            print('Check again whether the .xlsx file is correctly read in')
+            print('There is no behavior related information in this file, check again')
             return 0
             
             
