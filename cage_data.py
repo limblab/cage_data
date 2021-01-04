@@ -523,6 +523,11 @@ class cage_data:
     def ximea_video_sync(self):
         if hasattr(self, 'analog'):
            sync_pulse = self.analog['video_sync']
+           M = np.max(sync_pulse)
+           if (M>40000)|(M<10000):
+               print('The sync pulses may be problematic, please check')
+           sync_pulse[np.where(sync_pulse<M/3)[0]] = 0
+           sync_pulse[np.where(sync_pulse>M/3)[0]] = 32000
            self.analog['video_sync_timeframe'] = np.arange(len(self.analog['video_sync']))/self.analog['analog_fs']
            diff_sync_pulse = np.diff(sync_pulse)
            peaks, properties = find_peaks(diff_sync_pulse,prominence=(0.5*np.max(sync_pulse), None))
