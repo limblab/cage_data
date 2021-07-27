@@ -14,6 +14,7 @@ v1.2.0 - 08/04/2016 - minor modifications to allow use of Python 2.6+
 """
 
 from os             import getcwd, path
+from qtpy.QtWidgets import QFileDialog, QApplication
 
 # Version control
 brmiscfxns_ver = "1.2.0"
@@ -38,7 +39,10 @@ def openfilecheck(open_mode, file_name='', file_ext='', file_type=''):
             file_name = input("Enter complete " + file_ext + " file path or hit enter to browse: ")
 
             if not file_name:
-                pass
+                if 'app' not in locals(): app = QApplication([])
+                if not file_ext: file_type = 'All Files'
+                file_name = QFileDialog.getOpenFileName(QFileDialog(), "Select File", getcwd(),
+                                                        file_type + " (*" + file_ext + ")")
 
         # Ensure file exists (really needed for users type entering)
         if path.isfile(file_name):

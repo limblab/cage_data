@@ -1,21 +1,25 @@
 import numpy as np
 import _pickle as pickle
 import time
-import h5py
 import getpass
 import joblib
 import os
 import copy
 import xlrd
+import fnmatch
 from load_intan_rhd_format import read_data
 from scipy import stats, signal
 from intanutil.notch_filter import notch_filter
 from brpylib import NevFile, NsxFile
-from scipy.signal import find_peaks
+from scipy.signal import argrelextrema
 from collections import defaultdict
-
-memo1 = """Since Blackrock Python codes (brpy) are too slow when reading .nev files, we use MATLAB version of .nev files instead."""
-memo2 = """Please make sure MATLAB version of .nev files are in your target directory. """
+from cage_data_utils import get_paired_EMG_index, find_bad_EMG_index_from_list, delete_paired_bad_channel
+from cage_data_utils import parse_nev_header, parse_nsx_header
+from cage_data_utils import check_FSR_in_list, check_video_sync_in_list, check_EMG_in_list
+from cage_data_utils import train_waveform_classifier
+from cage_data_utils import parse_bento_annot
+from cage_data_utils import find_force_onset
+from cage_data_utils import validate_sync_pulse
 
 Pop_EMG_names_single = ['APB_1', 'Lum_1', 'PT_1', '1DI_1',
                         'FDP2_1', 'FCR1_1', 'FCU1_1', 'FCUR_1',
@@ -36,130 +40,109 @@ In summary, for the data collected between 2020-09 and 2020-10 on Pop, the indic
 indices: [3, 7, 12, 16, 24, 25, 26]
 names: ['1DI_1', 'FCUR_1', '1DI_2', 'FPB_1', 'TRI_2', 'BI_2', 'EDC1_2']
 """
-
-def get_paired_EMG_index(EMG_names_single):
-    EMG_names = []
-    EMG_index1 = []
-    EMG_index2 = []
-    for i in range(len(EMG_names_single)):
-        temp_str = EMG_names_single[i][:-2]
-        if temp_str in EMG_names:
-            continue
-        else:
-            for j in range(i+1, len(EMG_names_single)):
-                temp_str2 = EMG_names_single[j]
-                if temp_str2.find(temp_str) != -1:
-                    if (temp_str2[:-2] in EMG_names) == True:
-                        EMG_names.append(''.join( (temp_str2[:-2], '-3') ))
-                    else:
-                        EMG_names.append(temp_str)
-                    EMG_index1.append(EMG_names_single.index(EMG_names_single[i]))
-                    EMG_index2.append(EMG_names_single.index(EMG_names_single[j]))
-    return EMG_names, EMG_index1, EMG_index2
-
-def find_bad_EMG_index_from_list(EMG_names_single, bad_EMG):
-    bad_index = []
-    paired_index = []
-    for each in bad_EMG:
-        temp = list(each)
-        if each[-1] == '1':
-           temp[-1] = '2'
-        elif each[-1] == '2':
-            temp[-1] = '1'
-        elif each[-1] == '3':
-            temp[-1] = '1'
-        paired_name = ''.join(temp)
-        # -------- Make sure the paired EMG channel can be found ---------- #
-        if paired_name in EMG_names_single:
-            bad_index.append(EMG_names_single.index(each))
-            paired_index.append(EMG_names_single.index(paired_name))
-    return bad_index, paired_index
-
-def delete_paired_bad_channel(EMG_names_single, bad_EMG):
-    """
-    If both of the two single end channels are noise, then we need to get rid of both
-    This function will find out the indices of them. Deleting will be done outside of this function
-    """
-    def list_duplicates(seq):
-        tally = defaultdict(list)
-        for i,item in enumerate(seq):
-            tally[item].append(i)
-        return ((key,locs) for key,locs in tally.items() if len(locs)>1)
-
-    temp = []
-    for each in bad_EMG:
-        temp.append(each[:-1])
-    bad_paired_channel = []
-    names = []
-    for dup in sorted(list_duplicates(temp)):
-        print( 'The paired channels of %s will be deleted'%(dup[0]) )
-        name1, name2 = bad_EMG[dup[1][0]], bad_EMG[dup[1][1]]
-        names.append(name1)
-        names.append(name2)
-        bad_paired_channel.append(EMG_names_single.index(name1))
-        bad_paired_channel.append(EMG_names_single.index(name2))
-    bad_EMG_post = copy.deepcopy(bad_EMG)
-    for each in names:
-        bad_EMG_post.remove(each)
-    print('The numbers of these bad channels are %s' % (bad_paired_channel))
-    return bad_paired_channel, bad_EMG_post
     
 class cage_data:
     def __init__(self):
+        self.date_num = 0
+        self.has_EMG = 0
         self.meta = dict()
         self.meta['Processes by'] = getpass.getuser()
         self.meta['Processes at'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         print('An empty cage_data object has been created.')
-        print(memo1)
-        print(memo2)
         
-    def create(self, path, nev_mat_file, rhd_file,      # Required data files. Set 'rhd_file' as ' ' if no wireless EMG recordings
+    def create(self, path, nev_file, rhd_file,      # Required data files. Set 'rhd_file' as ' ' if no wireless EMG recordings
                is_sorted = 0, empty_channels = [],      # Is the nev file sorted? Any empty channel?
                bad_EMG = [], do_notch = 1,              # Whether apply notch filter? Should remove bad EMG channels?
-               has_analog = 0,                          # Analog files are for sync pulses of videos.
                comb_filter = 0):                        # Comb filter for EMG preprocessing                                                    
         """
         'nev_mat_file' is the neural data file,
         'rhd_file' is the EMG data file
         """
-        if rhd_file[-3:] == 'rhd':
+        self.is_sorted = is_sorted
+        
+        if path[-1] != '/':
+            path = path + '/'
+        if nev_file[-4:] != '.nev':
+            nev_file = nev_file + '.nev'
+        # -------- Read the nev file -------- #
+        self.parse_nev_file(path + nev_file, is_sorted, empty_channels)
+        # -------- To check whether rhd_file is along with the nev file -------- #
+        if rhd_file == '':
+            print('No wireless EMGs recorded during this session')
+        else:
             self.has_EMG = 1
-        else:
-            self.has_EMG = 0
-        if is_sorted == 0:
-            self.is_sorted = 0
-        else:
-            self.is_sorted = 1
-        if path[-1] == '/':
-            self.nev_mat_file = ''.join((path, nev_mat_file))
-            if self.has_EMG == 1:
-                self.rhd_file = ''.join((path, rhd_file))
-            else:
-                self.rhd_file = []
-        else:
-            self.nev_mat_file = ''.join((path, '/', nev_mat_file))
-            if self.has_EMG == 1:
-                self.rhd_file = ''.join((path, '/', rhd_file))
-            else:
-                self.rhd_file = []
-
-        if self.has_EMG == 1:
-            try:
-                self.date_num = int(rhd_file[:8])
-            except ValueError:
-                self.date_num = 0
-                print('Check the file name of the .rhd file!')
-            else:
-                pass
-
-            self.EMG_names, self.EMG_diff, self.EMG_timeframe = self.parse_rhd_file(self.rhd_file, 
+            self.EMG_names, self.EMG_diff, self.EMG_timeframe = self.parse_rhd_file(path + rhd_file, 
                                                                                     do_notch, 
                                                                                     bad_EMG,
                                                                                     comb_filter)
-            self.file_length = self.EMG_timeframe[-1]
             print(self.EMG_names)
-            
-        self.parse_nev_mat_file(self.nev_mat_file, is_sorted, empty_channels, has_analog)
+        
+        # -------- To check if any .nsx file along with the nev file -------- #     
+        file_list = fnmatch.filter(os.listdir( path ), nev_file[:-4] + '.ns*')
+        # -------- To check .ns6 file first -------- #
+        if nev_file[:-4] + '.ns6' in file_list:
+            self.raw_data = self.parse_ns6_file(path + nev_file[:-4] + '.ns6')
+            print('Raw data (fs = 30kHz) was recorded along with spike data in this session!')
+            file_list.remove(nev_file[:-4] + '.ns6')
+        else:
+            print('No raw data along with this recording session.')
+        # -------- To check .nsx file (ns1 - ns5) -------- #
+        nsx_durations = []
+        if file_list == []:
+            print('There is no nsx file recorded with the nev file!')
+        else:
+            analog_list = []
+            for each in file_list:
+                data, duration = self.parse_nsx_file(path + each)
+                analog_list.append(data)
+                nsx_durations.append(duration)
+        self.analog = {}
+        if analog_list != []:
+            FSR_timeframe, FSR_data = check_FSR_in_list(analog_list, lpf = True)
+            video_sync_timeframe, video_sync = check_video_sync_in_list(analog_list)
+            if FSR_timeframe != []:
+                self.analog['FSR_data'] = FSR_data
+                self.analog['FSR_data_timeframe'] = FSR_timeframe
+            if video_sync_timeframe != []:
+                self.analog['video_sync'] = video_sync
+                self.analog['video_sync_timeframe'] = video_sync_timeframe
+            if self.has_EMG == 0:
+                EMG_timeframe, EMG_fs, EMG_diff, EMG_names = check_EMG_in_list(analog_list)
+                if EMG_timeframe != []:
+                    self.has_EMG = 1
+                    self.EMG_names = EMG_names
+                    self.EMG_diff = EMG_diff
+                    self.EMG_timeframe = EMG_timeframe
+                    self.EMG_fs = EMG_fs
+   
+        if self.has_EMG == 1:
+            self.file_length = self.EMG_timeframe[-1]
+        elif nsx_durations != []:
+            self.file_length = nsx_durations[0]
+        else:
+            self.file_length = self.nev_duration
+       
+        # -------- Do some simple pre-processing, including basic cortical data cleaning and EMG filtering -------- #
+        self.clean_cortical_data()
+        if self.has_EMG == 1:
+            self.EMG_filtering(10) # Filter the EMG_diff with an LPF (fc = 10 Hz)
+        # -------- To check whether there's any annotation file generated by Bento -------- # 
+        bento_flag = 0
+        file_list = fnmatch.filter(os.listdir( path ), nev_file[:-4] + '.annot')
+        if file_list == []:
+            print('There is no .annot file')
+        else:
+            self.read_behavior_tags_bento(path, file_list[0])
+            bento_flag = 1
+            print('.annot file found!')
+       
+        if bento_flag == 0:
+            print('No annotations from Bento, try to read excel instead')
+            file_list = fnmatch.filter(os.listdir( path ), nev_file[:-4] + '.xlsx')
+            if file_list == []:
+                print('There is no .xlsx file')
+            else:
+                self.read_behavior_tags_excel(path, file_list[0])       
         
         self.is_cortical_cleaned = False
         self.is_EMG_filtered = False
@@ -167,11 +150,7 @@ class cage_data:
         self.is_spike_smoothed = False
         self.binned = {}
         self.pre_processing_summary()
-        self.raw_data = self.parse_ns6_file()
-        if self.raw_data != 0:
-            print('Raw data (fs = 30kHz) was recorded along with spike data in this session!')
-        else:
-            print('No raw data along with this recording session.')
+        
         
     def pre_processing_summary(self):
         if hasattr(self, 'is_sorted'):
@@ -190,47 +169,37 @@ class cage_data:
             print('Data binned? -- %s' %(self.is_data_binned))
         if hasattr(self, 'is_spike_smoothed'):
             print('Spikes smoothed? -- %s' %(self.is_spike_smoothed))
-    
-    def parse_nev_mat_file(self, filename, is_sorted, empty_channels, has_analog):
-        """
-        Parse MATLAB version of .nev files
-        """
-        s = time.clock()
-        nev_file = h5py.File(filename, 'r')['NEV']
-        ch_lbl = list(np.asarray(nev_file['elec_labels']).T)
-        for i in range(len(ch_lbl)):
-            ch_lbl[i] = ''.join(chr(x) for x in ch_lbl[i]).strip(b'\x00'.decode())
-        elec_id = list(nev_file['elec_id'][0])
-        electrode_meta = dict()
-        electrode_meta['elec_pin'] = list(np.asarray(nev_file['elec_pin'][0]).T)
-        electrode_meta['elec_bank'] = list(np.asarray(nev_file['elec_bank']).T)
-        for i in range(len(electrode_meta['elec_bank'])):
-            electrode_meta['elec_bank'][i] = chr(electrode_meta['elec_bank'][i])
-        thresholds = list(np.asarray(nev_file['elec_threshold'][0]).T)
-        # ----------- Delete empty electrode channels, they are often used as reference ---------- #
-        empty_str = []
-        for each in empty_channels:
-            empty_str.append(''.join(('elec', str(each))))
-        bad_num = []
-        for each in empty_str:
-            bad_num.append(ch_lbl.index(each))
+
+    def parse_nev_file(self, file_name, is_sorted, empty_channels):
+        time_s = time.time()
+        
+        NevFileObj = NevFile(file_name)
+        basic_header = NevFileObj.basic_header
+        extended_header = NevFileObj.extended_headers
+        elec_id_list, elec_label_list, thresholds = parse_nev_header(extended_header)
+        
+        # ----------- Delete empty electrode channels, they may be used as references or other purpose ---------- #
+        empty_str = ['elec' + str(each) for each in empty_channels]
+        bad_num = [elec_label_list.index(each) for each in empty_str]
         for idx in sorted(bad_num, reverse=True):
-            del(ch_lbl[idx])
-            del(elec_id[idx])
-            del(electrode_meta['elec_pin'][idx])
-            del(electrode_meta['elec_bank'][idx])
+            del(elec_label_list[idx])
+            del(elec_id_list[idx])
             del(thresholds[idx])
+        
+        output = NevFileObj.getdata(elec_ids='all')
+        NevFileObj.datafile.close()
+        
         # ---------- Deal with actual spike data ---------- #
-        time_stamp = np.asarray(nev_file['data']['spikes']['TimeStamp'])
-        electrode = np.asarray(nev_file['data']['spikes']['Electrode'])
-        unit = np.asarray(nev_file['data']['spikes']['Unit'])
-        waveform = np.asarray(nev_file['data']['spikes']['Waveform'])
+        time_stamp = np.asarray(output['spike_events']['TimeStamps'])
+        electrode = np.asarray(output['spike_events']['Channel'])
+        unit = np.asarray(output['spike_events']['Unit'])
+        waveform = np.asarray(output['spike_events']['Waveforms'])
         
         s_spikes, s_waveforms = [], []
         # -------- Two conditions, one for sorted files, another for unsorted files -------- #
         # -------- Default is unsorted -------- #
-        if self.is_sorted == 0:
-            for each in elec_id:
+        if is_sorted == 0:
+            for each in elec_id_list:
                 # -------- Read only unsorted waveforms, avoid cases where 'unit == 255'
                 idx = np.where((electrode == each) & (unit == 0))[0]
                 s_spikes.append(time_stamp[idx])
@@ -239,61 +208,80 @@ class cage_data:
             # -------- Codes for reading sorted files -------- #
             # -------- Max number of units in each channel is set as '5' --------#
             MAX = 5
-            self.sorted_ch_lbl, self.sorted_elec_id, self.sorted_unit = [], [], []
-            for each in elec_id:
+            self.sorted_ch_lbl, self.sorted_elec_id, self.sorted_unit, self.sorted_unit_name = [], [], [], []
+            for i, each in enumerate(elec_id_list):
                 for u in range(1, MAX + 1):
                     idx = np.where((electrode == each) & (unit == u))[0]
                     if len(idx) > 0:
                         s_spikes.append(time_stamp[idx])
                         s_waveforms.append(waveform[idx,:])
                         self.sorted_elec_id.append(each)
-                        self.sorted_ch_lbl.append(ch_lbl[elec_id.index(each)])
+                        self.sorted_ch_lbl.append(elec_label_list[i])
                         self.sorted_unit.append(u)
+                        self.sorted_unit_name.append(elec_label_list[i] + str(u))
                     else:
                         break
         
-        self.nev_fs = nev_file['fs'][0][0]
-        self.nev_duration = nev_file['duration'][0][0]
-        self.electrode_meta = electrode_meta
+        # -------- Give a number of properties values -------- #
+        self.date_num = int(''.join(c for c in str(basic_header['TimeOrigin']) if c.isdigit())[:8])
+        self.nev_fs = basic_header['SampleTimeResolution']
+        self.nev_duration = np.max(time_stamp)/self.nev_fs
+        self.electrode_meta = []
         self.thresholds = thresholds
         self.spikes = s_spikes
         self.waveforms = s_waveforms
-        self.ch_lbl = ch_lbl
-        self.elec_id = elec_id
+        self.ch_lbl = elec_label_list
+        self.elec_label = elec_label_list
+        self.elec_id = elec_id_list
+                
+        time_e = time.time()
+        print('Parsing the nev file took %.3f s'%(time_e - time_s))
+    
+    def parse_nsx_file(self, file_name):
+        NsxFileObj = NsxFile(file_name)
+        header = NsxFileObj.extended_headers
+        data = NsxFileObj.getdata(elec_ids='all', start_time_s=0, data_time_s='all', downsample=1)
+        NsxFileObj.datafile.close()
         
-        if has_analog == 1:
-           self.analog = {}
-           self.analog['analog_fs'] = nev_file['analog_fs'][0][0]
-           self.analog['analog_data'] = np.asarray(nev_file['analog_data'])
-           self.analog['time_frame'] = np.arange(len(self.analog['analog_data']))/self.analog['analog_fs']
-           analog_lbl = list(np.asarray(nev_file['analog_labels']).T)
-           for (i, each) in enumerate(analog_lbl):
-               analog_lbl[i] = ''.join(chr(x) for x in each).strip(b'\x00'.decode())
-           self.analog['analog_lbl'] = analog_lbl
-           self.analog['analog_MaxDigiValue'] = nev_file['analog_MaxDigiValue'][0][0]
-           self.analog['analog_MaxAnalogValue'] = nev_file['analog_MaxAnalogValue'][0][0]
-           self.analog['analog_MinDigiValue'] = -self.analog['analog_MaxDigiValue']
-           self.analog['analog_MinAnalogValue'] = -self.analog['analog_MaxAnalogValue']
-           
-           # Check the video sync pulses
-           if 'video_sync' in self.analog['analog_lbl']:
-               self.analog['video_sync'] = self.analog['analog_data'][:, self.analog['analog_lbl'].index('video_sync')]
-           elif 'kinectSync' in self.analog['analog_lbl']:
-               self.analog['video_sync'] = self.analog['analog_data'][:, self.analog['analog_lbl'].index('kinectSync')]
-           elif 'videosync' in self.analog['analog_lbl']:
-               self.analog['video_sync'] = self.analog['analog_data'][:, self.analog['analog_lbl'].index('videosync')]
-           else:
-               print('No sync pulses!')
-           # If the rhd_file is empty, then check whether there is any EMG channel with Cerebus analog inputs
-           if not self.rhd_file:
-               self.check_EMG_in_cerebus_analog()   
-               self.file_length = self.nev_duration
-               
-           # Check the FSR data
-           self.check_FSR_in_cerebus_analog()
-        
-        e = time.clock()
-        print("%.3f s for parsing the nev-mat file" %(e-s))
+        analog_label, max_analog, max_digital = parse_nsx_header(header, data)
+        analog = {}
+        analog['label'] = analog_label
+        analog['MaxDigiValue'] = max_digital
+        analog['MaxAnalogValue'] = max_analog
+        analog['MinDigiValue'] = [-each for each in analog['MaxDigiValue']]
+        analog['MinAnalogValue'] = [-each for each in analog['MaxAnalogValue']]
+        analog['fs'] = data['samp_per_s']
+        analog['data'] = data['data'].T
+        analog['time_frame'] = np.arange(len(analog['data']))/analog['fs']
+        nsx_duration = data['data_time_s']
+        return analog, nsx_duration        
+   
+    def parse_ns6_file(self, file_name):
+        ns6_file_name = file_name[:-4]+'.ns6'
+        if os.path.exists(ns6_file_name) == False:
+            print('There is no .ns6 file along with this .nev file')
+            return 0
+        else:
+            ns6_file = NsxFile(ns6_file_name)
+            _raw_data = ns6_file.getdata()
+            ns6_file.close()
+            raw_data = dict()
+            raw_data['data'] = _raw_data['data'].T
+            raw_data['fs'] = _raw_data['samp_per_s']
+            raw_data['elec_id'] = _raw_data['elec_ids']
+            raw_data['ch_lbl'] = list()
+            if hasattr(self, 'elec_id'):
+                for i, each in enumerate(raw_data['elec_id']):
+                    if each in self.elec_id:
+                        raw_data['ch_lbl'].append(self.elec_label[self.elec_id.index(each)])
+                    else:
+                        raw_data['ch_lbl'].append('No elec label')
+            else:
+                raw_data['ch_lbl'] = 0
+            raw_data['timeframe'] = np.arange(len(raw_data['data']))/raw_data['fs']
+            raw_data['elec_label'] = raw_data['ch_lbl']
+            self.ns6_duration = _raw_data['data_time_s']
+            return raw_data
         
     def parse_rhd_file(self, filename, notch, bad_EMG, comb_filter):
         rhd_data = read_data(filename)
@@ -370,8 +358,10 @@ class cage_data:
         sync_line1 = rhd_data['board_dig_in_data'][1]
         d0 = np.where(sync_line0 == True)[0]
         d1 = np.where(sync_line1 == True)[0]
-        ds = int(d1[0] - int((d1[0]-d0[0])*0.2))
-        de = int(d1[-1] + int((d0[-1]-d1[-1])*0.2))
+        # ds = int(d1[0] - int((d1[0]-d0[0])*0.2))
+        # de = int(d1[-1] + int((d0[-1]-d1[-1])*0.2))
+        ds = int(d0[0])
+        de = int(d1[-1])
         rhd_timeframe = np.arange(de-ds+1)/self.EMG_fs
         return EMG_names, list(EMG_diff[:, ds:de]), rhd_timeframe
         
@@ -446,8 +436,14 @@ class cage_data:
         
     def FSR_data_downsample(self, new_fs):
         if 'FSR_data' in self.analog.keys():
+            if 'FSR_data_timeframe' in self.analog.keys():
+                fs = 1/stats.mode(np.diff(self.analog['FSR_data_timeframe']))[0][0]
+            elif 'time_frame' in self.analog.keys():
+                fs = 1/stats.mode(np.diff(self.analog['time_frame']))[0][0]
+            else:
+                fs = self.analog['analog_fs']
             down_sampled = []
-            n = self.analog['analog_fs']/new_fs
+            n = fs/new_fs
             length = int(np.floor(np.size(self.analog['FSR_data'][0])/n))
             for each in self.analog['FSR_data']:
                 temp = []
@@ -518,84 +514,52 @@ class cage_data:
             save_name = save_path + '/' + file_name + '.pkl'
         with open (save_name, 'wb') as fp:
             pickle.dump(self, fp)
-        print('Save to %s successfully' %(save_name))
+        print('Save to %s successfully \n' %(save_name))
         
     def ximea_video_sync(self):
-        if hasattr(self, 'analog'):
+        if 'video_sync' in self.analog.keys():
+           if 'video_sync_timeframe' not in self.analog.keys():
+               self.analog['video_sync_timeframe'] = self.analog['time_frame']
            sync_pulse = self.analog['video_sync']
            M = np.max(sync_pulse)
-           if (M>40000)|(M<10000):
-               print('The sync pulses may be problematic, please check')
            sync_pulse[np.where(sync_pulse<M/3)[0]] = 0
            sync_pulse[np.where(sync_pulse>M/3)[0]] = 32000
-           self.analog['video_sync_timeframe'] = np.arange(len(self.analog['video_sync']))/self.analog['analog_fs']
            diff_sync_pulse = np.diff(sync_pulse)
-           peaks, properties = find_peaks(diff_sync_pulse,prominence=(0.5*np.max(sync_pulse), None))
-           peaks = list(peaks)
+           peaks = list(argrelextrema(diff_sync_pulse, np.greater)[0])
+           bad_peaks = validate_sync_pulse(sync_pulse, 32000)
+           for each in bad_peaks:
+               del(peaks[each])
+           print('There are %d pulses for video sync in this file'%(len(peaks)))
            video_timestamps = self.analog['video_sync_timeframe'][peaks]
         else:
             print('No video sync signals in this file')
             peaks = 0
             video_timestamps = 0
         return video_timestamps
-        
-    def clean_cortical_data_with_classifier(self, clf_path, clf_file, clf_type = 'sklearn'):
-        # -------- Designed only for files without spike sorting -------- #       
-        # -------- The most easy to use clfs are those trained using sklearns -------- #
-        # -------- Codes for clfs from pytorch will be finished later -------- #
+                                
+    def clean_cortical_data_with_classifier(self, template_file_path, template_file):
+        if template_file_path[-1] != '/':
+            template_file_path = template_file_path + '/'
+        joblib_list = fnmatch.filter(os.listdir( template_file_path ), '*.joblib')
+        if joblib_list == []: 
+            print('Need to train the classifier first!')
+            clf_file = train_waveform_classifier(template_file_path, template_file)
+        else:
+            print('Classifier already trained!')
+            clf_file = template_file_path + joblib_list[0]
         self.bad_waveforms = []
-        waveforms = self.waveforms
-        if clf_type == 'sklearn':
-            clf = joblib.load(clf_path + clf_file)
-            for i, each in enumerate(waveforms):
+        clf = joblib.load(clf_file)
+        for i, each in enumerate(self.waveforms):
+            if each.shape[0] == 0:
+                continue
+            else:
                 res = clf.predict(each)
                 bad_idx = np.where(res == 1)[0]
                 if len(bad_idx) > 0:
                     self.bad_waveforms.append(each[bad_idx, :])
                     self.waveforms[i] = np.delete(self.waveforms[i], bad_idx, axis = 0)
-                    self.spikes[i] = np.delete(self.spikes[i], bad_idx)
-            
-    def parse_ns6_file(self):
-        ns6_file_name = self.nev_mat_file[:-4]+'.ns6'
-        if os.path.exists(ns6_file_name) == False:
-            print('There is no .ns6 file along with this .nev file')
-            return 0
-        else:
-            ns6_file = NsxFile(ns6_file_name)
-            _raw_data = ns6_file.getdata()
-            ns6_file.close()
-            raw_data = dict()
-            raw_data['data'] = _raw_data['data'].T
-            raw_data['fs'] = _raw_data['samp_per_s']
-            raw_data['elec_id'] = _raw_data['elec_ids']
-            raw_data['ch_lbl'] = list()
-            if hasattr(self, 'elec_id'):
-                for i, each in enumerate(raw_data['elec_id']):
-                    if each in self.elec_id:
-                        raw_data['ch_lbl'].append(self.ch_lbl[self.elec_id.index(each)])
-                    else:
-                        raw_data['ch_lbl'].append('No elec label')
-            else:
-                raw_data['ch_lbl'] = 0
-            raw_data['timeframe'] = np.arange(len(raw_data['data']))/raw_data['fs']
-            return raw_data
+                    self.spikes[i] = np.delete(self.spikes[i], bad_idx)   
     
-    def check_EMG_in_cerebus_analog(self):
-        idx = []
-        for i, lbl in enumerate(self.analog['analog_lbl']):
-            if 'EMG' in lbl:
-                idx.append(i)
-        if idx:
-            self.EMG_names, self.EMG_diff = [], []
-            for i in idx:
-                self.EMG_names.append(self.analog['analog_lbl'][i])
-                self.EMG_diff.append(self.analog['analog_data'][:, i])
-            self.EMG_timeframe = np.arange(len(self.EMG_diff[0]))/self.analog['analog_fs']
-            self.EMG_fs = self.analog['analog_fs']
-            print('This file contains EMG acquired by Cerebus system.')
-            print(self.EMG_names)
-            self.has_EMG = 1
-            
     def get_EMG_idx(self, EMG_list):
         e_flag = False
         if 'EMG' in self.EMG_names[0]:
@@ -608,28 +572,7 @@ class cage_data:
                 each = 'EMG_' + each
             idx.append(np.where(EMG_names == each)[0])
         return np.asarray(idx).reshape((len(idx), ))
-    
-    def check_FSR_in_cerebus_analog(self, lp_filter = True):
-        """
-        A function to check the existence of the FSR data, and to read and filter them
-        A lowpass filter is used to filter the FSR data, fc = 10 Hz
-        """
-        blow, alow = signal.butter(4, 10/(self.analog['analog_fs']/2), 'low')
-        idx = []
-        for i, lbl in enumerate(self.analog['analog_lbl']):
-            if 'FSR' in lbl:
-                idx.append(i)
-        if idx:
-            self.analog['FSR_data'] = []
-            for i in idx:
-                temp = self.analog['analog_data'][:, i]
-                temp = (temp-self.analog['analog_MinDigiValue'])/32768*self.analog['analog_MaxAnalogValue']/1000
-                if lp_filter == True:
-                    self.analog['FSR_data'].append(signal.filtfilt(blow, alow, temp))
-                else:
-                    self.analog['FSR_data'].append(temp)
-            print('This file contains FSR data.')
-       
+          
     def apply_comb_filter(self, input_signal, fs, f_list = [120, 180, 240, 300, 360], Q = 30):
         """
         Here input_signal is a list
@@ -675,29 +618,6 @@ class cage_data:
         subs = np.random.rand(len(u_idx))*np.std(data)
         data[u_idx] = subs
         return data             
-        
-    def read_behavior_tags(self, path, file_name):
-        """
-        Reading in the type and the timing for each behavior segment from an xls file
-        If there is an xls file with behavior information with one .nev file, this 
-        function will create a dictionary to store the behavior information.
-        """
-        video_timeframe = self.ximea_video_sync()
-        if path[-1] != '/':
-            path = path+'/'
-        try:
-            data = xlrd.open_workbook(path+file_name)
-        except IOError:
-            print('Cannot open the file!')
-        else:
-            table = data.sheets()[0]
-            start = [int(x) for x in table.col_values(0)[1:]]
-            ends = [int(x) for x in table.col_values(1)[1:]]
-            tags = table.col_values(3)[1:]
-            self.behave_tags = dict()
-            self.behave_tags['start_time'] = list(video_timeframe[start])
-            self.behave_tags['end_time'] = list(video_timeframe[ends])
-            self.behave_tags['tag'] = tags
 
     def get_elec_idx(self, elec_num):
         """
@@ -722,79 +642,123 @@ class cage_data:
             del(self.thresholds[idx])
             del(self.waveforms[idx])
             del(self.spikes[idx])
-            del(self.electrode_meta['elec_pin'][idx])
-            del(self.electrode_meta['elec_bank'][idx])
-        
-    def get_single_data_segment(self, behave_time, behave_label, requires_raw_EMG = False, requires_spike_timing = False):
-        """
-        This function is designed to get a data segment corresponding to the tag extracted from videos
-        behave_time is a list with two elements, each of which is time in seconds
-        behave_label is a string for describing the monkey's behavior
-        """
-        timeframe = self.binned['timeframe']
-        binned_spikes = np.asarray(self.binned['spikes']).T
-        emgs = np.asarray(self.binned['filtered_EMG']).T
+            del(self.elec_label[idx])
+    
+    def find_pg_force_onset(self, ch, thr = 0.4):
         if 'FSR_data' in self.analog.keys():
-            fsrs = np.asarray( self.binned['FSR_data'] ).T
-        t = behave_time  
-        idx = np.where((timeframe>t[0]) & (timeframe<t[1]))[0]
-        seg_binned_spikes = binned_spikes[idx, :] 
-        seg_emgs = emgs[idx, :]
-        if 'FSR_data' in self.analog.keys():
-            seg_fsrs = fsrs[idx, :]
-        seg_timeframe = timeframe[idx] 
-        seg_emg_names = self.EMG_names
-        seg_unit_names = self.ch_lbl
-        behave_dict = dict()
-        behave_dict['spike'] = seg_binned_spikes
-        behave_dict['EMG'] = seg_emgs
-        behave_dict['timeframe'] = seg_timeframe
-        behave_dict['label'] = behave_label
-        behave_dict['EMG_names'] = seg_emg_names
-        behave_dict['unit_names'] = seg_unit_names
-        if requires_raw_EMG == True:
-            idx_raw_EMG = np.where((self.EMG_timeframe>t[0]) & (self.EMG_timeframe<t[1]))[0]
-            behave_dict['raw_EMG'] = np.asarray(self.EMG_diff).T[idx_raw_EMG, :]
-            behave_dict['raw_EMG_timeframe'] = self.EMG_timeframe[idx_raw_EMG]
-            behave_dict['raw_EMG_fs'] = self.EMG_fs
-        if requires_spike_timing == True:
-            behave_dict['spike_timing'] = []
-            for i, s in enumerate(self.spikes):
-                s = s/30000
-                idx = np.where((s>t[0]) & (s<t[1]))[0]
-                behave_dict['spike_timing'].append(s[idx])
-        if behave_label == 'pg':
-            behave_dict['FSR_data'] = seg_fsrs
-        return behave_dict                     
-            
-    def get_all_data_segment(self, requires_raw_EMG = False, requires_spike_timing = False):
-        #self.read_behavior_tags(xls_path, xls_name)
-        if hasattr(self, 'behave_tags') == True:
-            tags = self.behave_tags
-            behave_seg = []
-            for i in range(len(tags['start_time'])):
-                seg = self.get_single_data_segment([tags['start_time'][i], tags['end_time'][i]], 
-                                                   tags['tag'][i], 
-                                                   requires_raw_EMG,
-                                                   requires_spike_timing)
-                behave_seg.append(seg)
-            return behave_seg
+            ft = self.analog['FSR_data_timeframe']
+            f = self.analog['FSR_data']
+            pg_idx = [i for i, each in enumerate(self.behave_tags['tag']) if each == 'pg']
+            pg_start_time = [self.behave_tags['start_time'][i]-0.1 for i in pg_idx]
+            pg_end_time = [self.behave_tags['end_time'][i] for i in pg_idx]
+            pg_trial_idx = [np.where( (ft>pg_start_time[i])&(ft<pg_end_time[i]) )[0] for i in range(len(pg_start_time))]
+            pg_trial_force = [np.vstack((f[0][idx], f[1][idx])).T for idx in pg_trial_idx]
+            pg_trial_timeframe = [ft[idx] for idx in pg_trial_idx]
+                    
+            idx_onset = find_force_onset(pg_trial_force, ch, thr)
+            time_onset = [pg_trial_timeframe[i][idx_onset[i]] for i in range(len(pg_trial_timeframe))]
+            print('Get the force onset time!')
+            return time_onset
         else:
-            print('There is no behavior related information in this file, check again')
-            return 0
+            print('No FSR data in this file')
+            return []
+    
+    def read_behavior_tags_bento(self, path, file_name):
+        self.behave_event = {}
+        self.behave_tags = {'tag':[], 'start_time': [], 'end_time': []}
+        behave_frame = parse_bento_annot(path, file_name)
+        video_timeframe = self.ximea_video_sync()
+        if 'bar_touch' in behave_frame.keys(): 
+            bar_touch = behave_frame.pop('bar_touch')
+            self.behave_event['bar_touch'] = list(video_timeframe[ bar_touch[:, 0] ])
+        if 'treat_touch' in behave_frame.keys():
+            treat_touch = behave_frame.pop('treat_touch')
+            self.behave_event['treat_touch'] = list(video_timeframe[ treat_touch[:, 0] ])
+        if behave_frame != []:
+            for key,value in behave_frame.items():
+                for i in range(len(value)):
+                    self.behave_tags['tag'].append(key)
+                    self.behave_tags['start_time'].append( video_timeframe[value[i, 0]] )
+                    self.behave_tags['end_time'].append( video_timeframe[value[i, 1]] )
+        if 'pg' in behave_frame.keys():
+            self.behave_event['pg_force_onset'] = self.find_pg_force_onset(0, 0.4)
+
+    def read_behavior_tags_excel(self, path, file_name):
+        """
+        Reading in the type and the timing for each behavior segment from an xls file
+        If there is an xls file with behavior information with one .nev file, this 
+        function will create a dictionary to store the behavior information.
+        """
+        video_timeframe = self.ximea_video_sync()
+        if path[-1] != '/':
+            path = path+'/'
+        try:
+            data = xlrd.open_workbook(path+file_name)
+        except IOError:
+            print('Cannot open the file!')
+        else:
+            table = data.sheets()[0]
+            start = [int(x) for x in table.col_values(0)[1:]]
+            ends = [int(x) for x in table.col_values(1)[1:]]
+            tags = table.col_values(3)[1:]
+            self.behave_tags = dict()
+            self.behave_tags['start_time'] = list(video_timeframe[start])
+            self.behave_tags['end_time'] = list(video_timeframe[ends])
+            self.behave_tags['tag'] = tags
             
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-        
-        
+    def get_behave_segment(self, name, time1, time2, requires_raw_EMG = False, requires_spike_timing = False, requires_30k = False):
+        # -------- determine if the name is from behave tags or behave events -------- #
+        if hasattr(self, 'behave_event'):
+            if name in self.behave_event.keys():
+                t = np.asarray(self.behave_event[name])
+                t1, t2 = t-time1, t+time2
+            else:
+                idx = [i for i, each in enumerate(self.behave_tags['tag']) if each == name]
+                t1 = np.asarray([self.behave_tags['start_time'][i] for i in idx])
+                t2 = np.asarray([self.behave_tags['end_time'][i] for i in idx])
+        else:
+            idx = [i for i, each in enumerate(self.behave_tags['tag']) if each == name]
+            t1 = np.asarray([self.behave_tags['start_time'][i] for i in idx])
+            t2 = np.asarray([self.behave_tags['end_time'][i] for i in idx])
+        if hasattr(self,'binned') == 0:
+            print('bin the data first!')
+        else:
+            timeframe = self.binned['timeframe']
+            binned_spikes = np.asarray(self.binned['spikes']).T
+            emgs = np.asarray(self.binned['filtered_EMG']).T
+            if 'FSR_data' in self.analog.keys():
+                fsrs = np.asarray( self.binned['FSR_data'] ).T
+            behave_dict_all = []
+            idx = [np.where( (timeframe>each[0]) & (timeframe<each[1]) )[0] for each in zip(t1, t2)]
+            for i, each in enumerate(idx):
+                behave_dict = {}
+                behave_dict['spikes'] = binned_spikes[each, :] 
+                behave_dict['EMG'] = emgs[each, :]
+                if (name == 'pg')|(name == 'pg_force_onset'):
+                    behave_dict['FSR_data'] = fsrs[each, :]
+                behave_dict['timeframe'] = timeframe[each] 
+                behave_dict['EMG_names'] = self.EMG_names
+                behave_dict['unit_names'] = self.elec_label
+                behave_dict['label'] = name
+                if requires_raw_EMG == True:
+                   idx_raw_EMG = np.where((self.EMG_timeframe>t1[i]) & (self.EMG_timeframe<t2[i]))[0]
+                   behave_dict['raw_EMG'] = np.asarray(self.EMG_diff).T[idx_raw_EMG, :]
+                   behave_dict['raw_EMG_timeframe'] = self.EMG_timeframe[idx_raw_EMG]
+                   behave_dict['raw_EMG_fs'] = self.EMG_fs 
+                if requires_spike_timing == True:
+                   behave_dict['spike_timing'] = []
+                   for s in self.spikes:
+                       s = s/30000
+                       idx_spike_timing = np.where((s>t1[i]) & (s<t2[i]))[0]
+                       behave_dict['spike_timing'].append(s[idx_spike_timing] - t1[i])
+                if requires_30k == True:
+                    timeframe_30k = self.raw_data['timeframe']
+                    idx_30k = np.where((timeframe_30k>t1[i]) & (timeframe_30k<t2[i]))[0]
+                    behave_dict['30k'] = self.raw_data['data'][idx_30k, :3]
+                behave_dict_all.append(behave_dict)
+        return behave_dict_all
+                
+                
         
         
         
