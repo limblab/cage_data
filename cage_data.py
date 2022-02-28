@@ -90,6 +90,7 @@ class cage_data:
         nsx_durations = []
         if file_list == []:
             print('There is no nsx file recorded with the nev file!')
+            analog_list = []
         else:
             analog_list = []
             for each in file_list:
@@ -702,9 +703,12 @@ class cage_data:
             ends = [int(x) for x in table.col_values(1)[1:]]
             tags = table.col_values(3)[1:]
             self.behave_tags = dict()
+            self.behave_event = dict()
             self.behave_tags['start_time'] = list(video_timeframe[start])
             self.behave_tags['end_time'] = list(video_timeframe[ends])
             self.behave_tags['tag'] = tags
+        if 'pg' in self.behave_tags['tag']:
+           self.behave_event['pg_force_onset'] = self.find_pg_force_onset(0, 0.4) 
             
     def get_behave_segment(self, name, time1, time2, requires_raw_EMG = False, requires_spike_timing = False, requires_30k = False):
         # -------- determine if the name is from behave tags or behave events -------- #
