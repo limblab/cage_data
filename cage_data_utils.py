@@ -267,8 +267,14 @@ def validate_sync_pulse(sync_pulse, M):
             bad_idx.append(i)
     return sorted(bad_idx, reverse = True)
         
-                
-                
+def read_video_timeframe_from_txt(path, file_name):
+    video_timeframe = []
+    with open( path + file_name, "r") as f:
+        for line in f.readlines():
+            line = line.strip('\n')  
+            idx = line.index('\t')
+            video_timeframe.append(float(line[:idx]))             
+    return video_timeframe
             
 
 

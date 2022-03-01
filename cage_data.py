@@ -20,6 +20,7 @@ from cage_data_utils import train_waveform_classifier
 from cage_data_utils import parse_bento_annot
 from cage_data_utils import find_force_onset
 from cage_data_utils import validate_sync_pulse
+from cage_data_utils import read_video_timeframe_from_txt
 
 Pop_EMG_names_single = ['APB_1', 'Lum_1', 'PT_1', '1DI_1',
                         'FDP2_1', 'FCR1_1', 'FCU1_1', 'FCUR_1',
@@ -133,7 +134,11 @@ class cage_data:
         if file_list == []:
             print('There is no .annot file')
         else:
-            self.read_behavior_tags_bento(path, file_list[0])
+            txt_file_list = fnmatch.filter(os.listdir( path ), nev_file[:-4] + '.txt')
+            if txt_file_list == []:
+                self.read_behavior_tags_bento(path, file_list[0])
+            else:
+                self.read_behavior_tags_bento_txt(path, file_list[0])
             bento_flag = 1
             print('.annot file found!')
        
@@ -683,7 +688,28 @@ class cage_data:
                     self.behave_tags['end_time'].append( video_timeframe[value[i, 1]] )
         if 'pg' in behave_frame.keys():
             self.behave_event['pg_force_onset'] = self.find_pg_force_onset(0, 0.4)
-
+            
+    def read_behavior_tags_bento_txt(self, path, file_name):
+        self.behave_event = {}
+        self.behave_tags = {'tag':[], 'start_time': [], 'end_time': []}
+        behave_frame = parse_bento_annot(path, file_name)
+        txt_file_name = file_name[:-6] + '.txt'
+        video_timeframe = read_video_timeframe_from_txt(path, txt_file_name)
+        if 'bar_touch' in behave_frame.keys(): 
+            bar_touch = behave_frame.pop('bar_touch')
+            self.behave_event['bar_touch'] = list(video_timeframe[ bar_touch[:, 0]-1 ])
+        if 'treat_touch' in behave_frame.keys():
+            treat_touch = behave_frame.pop('treat_touch')
+            self.behave_event['treat_touch'] = list(video_timeframe[ treat_touch[:, 0]-1 ])
+        if behave_frame != []:
+            for key,value in behave_frame.items():
+                for i in range(len(value)):
+                    self.behave_tags['tag'].append(key)
+                    self.behave_tags['start_time'].append( video_timeframe[ value[i, 0]-1 ] )
+                    self.behave_tags['end_time'].append( video_timeframe[ value[i, 1]-1 ] )
+        if 'pg' in behave_frame.keys():
+            self.behave_event['pg_force_onset'] = self.find_pg_force_onset(0, 0.4)
+            
     def read_behavior_tags_excel(self, path, file_name):
         """
         Reading in the type and the timing for each behavior segment from an xls file
