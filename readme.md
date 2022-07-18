@@ -9,3 +9,9 @@ The codes also include functions for semi-automatic artifacts rejection based on
 
 ## Details about how to use these codes and designing concerns to be continued, check the examples first if you are interested
 
+
+
+## Included Code from other Sources
+- Blackrock data loaders for .nev and .ns\* files from Blackrock Neurotech [https://blackrockneurotech.com/research/support/#manuals-and-software-downloads]
+- Intan data loaders for .rhd files from Intan Technologies [https://intantech.com/downloads.html?tabSelect=Software]
+
