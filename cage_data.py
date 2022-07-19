@@ -371,6 +371,25 @@ class cage_data:
         rhd_timeframe = np.arange(de-ds+1)/self.EMG_fs
         return EMG_names, list(EMG_diff[:, ds:de]), rhd_timeframe
         
+    def parse_mot_file(self, filename):
+        '''
+        Bringing in the joint information from OpenSim for the motion tracking
+        system
+
+        This is currently set to bring in .mot files. For information on the 
+        setup of .mot files, refer to 
+        https://simtk-confluence.stanford.edu:8443/display/OpenSim/Motion+%28.mot%29+Files
+        '''
+        with open(file=filename, mode='r') as mot_file:
+            full_file = mot_file.read() # put the whole thing into memory
+            
+    
+    
+    
+    
+    
+    
+    
     def clean_cortical_data(self, K1 = 8, K2 = 8):
         # ---------- K1 and K2 sets a threshold for high amplitude noise cancelling ----------#
         if hasattr(self, 'thresholds'):
