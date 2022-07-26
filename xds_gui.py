@@ -47,6 +47,15 @@ class xds_gui(tk.Frame):
         self.emg_select = ttk.Button(self.file_frame, text='Select .rhd', command=lambda:self.fn_update('rhd'))
         self.emg_select.grid(row=1, column=1, padx=5, pady=5)
 
+        # .mot files
+        self.mot_fn = tk.StringVar()
+        self.mot_entry = ttk.Entry(self.file_frame, textvariable=self.mot_fn)
+        self.mot_entry.grid(row=2, column=0, padx=30, pady=5, ipadx=100)
+        self.mot_select = ttk.Button(self.file_frame, text='Select .mot', command=lambda:self.fn_update('mot'))
+        self.mot_select.grid(row=2, column=1, padx=5, pady=5)
+        
+        
+        
         self.file_frame.grid(row=0, column=0, padx=5, pady=5)
 
 
@@ -78,10 +87,13 @@ class xds_gui(tk.Frame):
             self.nev_fn.set(fd.askopenfilename(filetypes=[('Neural Event','*.nev')]))
         elif box == 'rhd':
             self.emg_fn.set(fd.askopenfilename(filetypes=[('Intan Digital', '*.rhd')]))
+        elif box == 'mot':
+            self.mot_fn.set(fd.askopenfilename(filetypes=[('OpenSim or SIMM files', '*.mot')]))
 
     def convert_xds(self):
         nev_fn = self.nev_fn.get() # get the stored nev filename
         emg_fn = self.emg_fn.get()
+        mot_fn = self.mot_fn.get() # not implemented in cage_data.py yet. will have to finish updating
 
         # split out the path name
         nev_path, nev_fn = path.split(nev_fn)

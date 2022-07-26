@@ -380,8 +380,33 @@ class cage_data:
         setup of .mot files, refer to 
         https://simtk-confluence.stanford.edu:8443/display/OpenSim/Motion+%28.mot%29+Files
         '''
+
         with open(file=filename, mode='r') as mot_file:
-            full_file = mot_file.read() # put the whole thing into memory
+            line = mot_file.readline().split()[0]
+            # .mot header v1
+            if line == 'name':
+                while line != 'endheader':
+                    line_parse = line.split("=") # keep going until we're at the end of the header
+                    if line_parse[0] == 'datarows':
+                        n_rows = line_parse[-1]
+                    elif line_parse[0] == 'datacolumns':
+                        n_cols = line_parse[-1]
+                line = mot_file.readline() # read a new line
+
+            # .mot header v2 -- openSim style
+            elif line == 'Coordinates':
+                while line != 'endheader':
+                    line_parse = line.split("=") # keep going until we're at the end of the header
+                    if line_parse[0] == 'nRows':
+                        n_rows = line_parse[-1]
+                    elif line_parse[0] == 'nColumns':
+                        n_cols = line_parse[-1]
+                line = mot_file.readline() # read a new line
+
+
+            # bring in all of the data
+            col_headers = mot_file.readline # column headers
+            data = np.array([line.split('\t') for line in mot_file.readline()]) # the rest of the file parsed into a numpy array
             
     
     
