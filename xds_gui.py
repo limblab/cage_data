@@ -31,7 +31,7 @@ class xds_gui(tk.Frame):
 
         # --------------------------------------------------------------
         # file selection -- will try to autopopulate metadata below
-        self.file_frame = tk.LabelFrame(self, text='File Selection')
+        self.file_frame = tk.LabelFrame(self, text='File Conversion')
         # .nev loading
         # this will also look for associated .nsx files
         self.nev_fn = tk.StringVar()
@@ -54,10 +54,28 @@ class xds_gui(tk.Frame):
         self.mot_select = ttk.Button(self.file_frame, text='Select .mot', command=lambda:self.fn_update('mot'))
         self.mot_select.grid(row=2, column=1, padx=5, pady=5)
         
+        self.convert_button = ttk.Button(self.file_frame, text='Convert', command=self.convert_xds)
+        self.convert_button.grid(row=3, column=0, padx=5, pady=5)
         
-        
-        self.file_frame.grid(row=0, column=0, padx=5, pady=5)
+        self.file_frame.grid(row=0, column=0, padx=5, pady=5, columnspan=2)
 
+        # # binning data
+        # self.bin_frame = tk.LabelFrame(self, text='Bin Data')
+        
+
+
+        # self.bin_frame.grid(row=1, column=0, padx=5, pady=5, columnspan=2)
+
+        # plot data
+        self.plot_frame = tk.LabelFrame(self, text='Plotting')
+        
+        self.raw_plot_button = ttk.Button(self.plot_frame, text='Plot Raw', state='disabled')
+        self.raw_plot_button.grid(row=0, column=0, padx = 5, pady = 5)
+        self.bin_plot_button = ttk.Button(self.plot_frame, text='Plot Binned', state='disabled')
+        self.bin_plot_button.grid(row=0, column=1, padx = 5, pady = 5)
+
+
+        self.plot_frame.grid(row=2, column=0, padx=5, pady=5, columnspan=2)
 
         # # --------------------------------------------------------------
         # # metadata -- monkey name, task name
@@ -75,10 +93,8 @@ class xds_gui(tk.Frame):
 
 
 
-
-        self.convert_button = ttk.Button(self, text='Convert', command=self.convert_xds)
-        self.convert_button.grid(row=2, column=0)
-
+        self.save_button = ttk.Button(self, text='Save', command=self.save_xds, state='disabled')
+        self.save_button.grid(row=3, column=1, padx=5, pady=5)
 
 
 
@@ -91,19 +107,30 @@ class xds_gui(tk.Frame):
             self.mot_fn.set(fd.askopenfilename(filetypes=[('OpenSim or SIMM files', '*.mot')]))
 
     def convert_xds(self):
+        # get any of the stored filenames
         nev_fn = self.nev_fn.get() # get the stored nev filename
         emg_fn = self.emg_fn.get()
-        mot_fn = self.mot_fn.get() # not implemented in cage_data.py yet. will have to finish updating
+        mot_fn = self.mot_fn.get()
 
-        # split out the path name
+        self.xds.create(nev_fn, rhd_file=emg_fn, mot_file=mot_fn)
+        self.save_button.state('normal')
+        
+
+
+
+    def save_xds(self):
+        # just a wrapper for the save_to_pickle function
+        nev_fn = self.nev_fn.get() # get the stored nev filename
         nev_path, nev_fn = path.split(nev_fn)
-        emg_path, emg_fn = path.split(emg_fn)
+        nev_fn, _ = path.splitext(nev_fn)
 
-        # check emg and nev path locations
-        if nev_path!= emg_path:
-            print('The nev and EMG paths are different. XDS converter will not handle that well...')
 
-        self.xds.create(nev_path, nev_file=nev_fn, rhd_file=emg_fn)
+        save_fn = fd.asksaveasfilename(master=self,\
+            confirmoverwrite=True, filetypes=(['Pickle','.pkl']),\
+            initialdir=nev_path, initialfile= nev_fn.join('.pkl') )
+        
+        self.xds.save_to_pickle()
+
 
 
 

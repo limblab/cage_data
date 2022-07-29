@@ -51,28 +51,53 @@ class cage_data:
         self.meta['Processes at'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         print('An empty cage_data object has been created.')
         
-    def create(self, path, nev_file, rhd_file,      # Required data files. Set 'rhd_file' as ' ' if no wireless EMG recordings
-               is_sorted = 0, empty_channels = [],      # Is the nev file sorted? Any empty channel?
-               bad_EMG = [], do_notch = 1,              # Whether apply notch filter? Should remove bad EMG channels?
-               comb_filter = 0):                        # Comb filter for EMG preprocessing                                                    
+    def create(self,  nev_file, path = None, rhd_file = '', rhd_path = None,   
+               is_sorted = 0, empty_channels = [],      
+               bad_EMG = [], do_notch = 1, comb_filter = 0,
+               mot_file = '', mot_path = None):                          
         """
-        'nev_mat_file' is the neural data file,
-        'rhd_file' is the EMG data file
+        'nev_mat_file' is the neural data filename,
+        'rhd_file' is the EMG data filename
+        'mot_file' is the motion tracking filename
+
+        Required data files. Set 'rhd_file' as ' ' if no wireless EMG recordings
+        Is the nev file sorted? Any empty channel?
+        Whether apply notch filter? Should remove bad EMG channels?
+        Comb filter for EMG preprocessing                                                    
+        .mot file if doing motion tracking
+
+
+
+
+
         """
         self.is_sorted = is_sorted
         
-        if path[-1] != '/':
-            path = path + '/'
+
+        # path parsing -- allows .rhd, .mot, and .nev files in different locations
+        # plus allows you to use the full path name for the 
+        if not path: # if the passed path was empty
+            path,nev_file = os.path.split(nev_file) # pull the path from the filename
+        if rhd_file and not rhd_path: # if the passed rhd path was empty
+            rhd_path,rhd_file = os.path.split(rhd_file) # pull the path from the filename
+            if not rhd_path: # if that doesn't work
+                rhd_path = path # pull it from the nev file
+        if mot_file and not mot_path:
+            mot_path,mot_file = os.path.split(mot_file)
+            if not mot_path:
+                mot_path = path
+        
+
         if nev_file[-4:] != '.nev':
             nev_file = nev_file + '.nev'
         # -------- Read the nev file -------- #
-        self.parse_nev_file(path + nev_file, is_sorted, empty_channels)
+        self.parse_nev_file(os.path.join(path,nev_file), is_sorted, empty_channels)
         # -------- To check whether rhd_file is along with the nev file -------- #
         if rhd_file == '':
             print('No wireless EMGs recorded during this session')
         else:
             self.has_EMG = 1
-            self.EMG_names, self.EMG_diff, self.EMG_timeframe = self.parse_rhd_file(path + rhd_file, 
+            self.EMG_names, self.EMG_diff, self.EMG_timeframe = self.parse_rhd_file(os.path.join(rhd_path, rhd_file), 
                                                                                     do_notch, 
                                                                                     bad_EMG,
                                                                                     comb_filter)
@@ -123,7 +148,16 @@ class cage_data:
             self.file_length = nsx_durations[0]
         else:
             self.file_length = self.nev_duration
-       
+
+        # Several of these will be changed in the next section
+        self.is_cortical_cleaned = False
+        self.is_EMG_filtered = False
+        self.is_data_binned = False
+        self.is_spike_smoothed = False
+        self.binned = {}
+
+
+
         # -------- Do some simple pre-processing, including basic cortical data cleaning and EMG filtering -------- #
         self.clean_cortical_data()
         if self.has_EMG == 1:
@@ -149,12 +183,16 @@ class cage_data:
                 print('There is no .xlsx file')
             else:
                 self.read_behavior_tags_excel(path, file_list[0])       
+
+
         
-        self.is_cortical_cleaned = False
-        self.is_EMG_filtered = False
-        self.is_data_binned = False
-        self.is_spike_smoothed = False
-        self.binned = {}
+        if mot_file:
+            self.has_mot = 1 # set a flag
+            self.mot_timestamps, self.mot_data, self.mot_names = self.parse_mot_file(os.path.join(os.path.join(mot_file)))
+        else:
+            self.has_mot = 0
+        
+        
         self.pre_processing_summary()
         
         
@@ -167,9 +205,7 @@ class cage_data:
         if hasattr(self, 'EMG_diff'):
             print('EMG filtered? -- %s' %(self.is_EMG_filtered))
         else:
-            print('EMG filtered? -- %s' %('There is no EMG from DSPW system.'))
-        if hasattr(self, 'EMG_names'):
-            print('EMG filtered? -- %s' %(self.is_EMG_filtered))
+            print('EMG filtered? -- %s' %('There is no EMG in this recording.'))
         print('Cortical data cleaned? -- %s' %(self.is_cortical_cleaned))
         if hasattr(self, 'is_data_binned'):
             print('Data binned? -- %s' %(self.is_data_binned))
@@ -376,44 +412,55 @@ class cage_data:
         Bringing in the joint information from OpenSim for the motion tracking
         system
 
+        inputs:
+            .mot filename
+
+        outputs:
+            tracking location names, tracking locations, timestamps
+
         This is currently set to bring in .mot files. For information on the 
         setup of .mot files, refer to 
         https://simtk-confluence.stanford.edu:8443/display/OpenSim/Motion+%28.mot%29+Files
         '''
 
         with open(file=filename, mode='r') as mot_file:
-            line = mot_file.readline().split()[0]
+            print('processing .mot file')
+
+            line = mot_file.readline()
             # .mot header v1
-            if line == 'name':
-                while line != 'endheader':
+            if 'name' in line:
+                while 'endheader' not in line:
                     line_parse = line.split("=") # keep going until we're at the end of the header
                     if line_parse[0] == 'datarows':
-                        n_rows = line_parse[-1]
+                        n_rows = int(line_parse[-1])
                     elif line_parse[0] == 'datacolumns':
-                        n_cols = line_parse[-1]
-                line = mot_file.readline() # read a new line
+                        n_cols = int(line_parse[-1])
+                    line = mot_file.readline() # read a new line
 
             # .mot header v2 -- openSim style
-            elif line == 'Coordinates':
-                while line != 'endheader':
+            elif 'Coordinates' in line:
+                while 'endheader' not in line:
                     line_parse = line.split("=") # keep going until we're at the end of the header
                     if line_parse[0] == 'nRows':
-                        n_rows = line_parse[-1]
+                        n_rows = int(line_parse[-1])
                     elif line_parse[0] == 'nColumns':
-                        n_cols = line_parse[-1]
-                line = mot_file.readline() # read a new line
+                        n_cols = int(line_parse[-1])
+                    line = mot_file.readline() # read a new line
 
 
             # bring in all of the data
-            col_headers = mot_file.readline # column headers
-            data = np.array([line.split('\t') for line in mot_file.readline()]) # the rest of the file parsed into a numpy array
+            col_headers = mot_file.readline() # column headers
+            data = np.array([line.split('\t') for line in mot_file.readlines()]) # the rest of the file parsed into a numpy array
+
+            if data.shape != [nrows,ncols]:
+                print('Warning: Data from .mot table not sized as expected')
             
-    
-    
-    
-    
-    
-    
+            # separate timestamps from everything else.
+
+            timestamps = data[:,0] 
+            track_loc = data[:,1:]
+
+            return col_headers, track_loc, timestamps
     
     def clean_cortical_data(self, K1 = 8, K2 = 8):
         # ---------- K1 and K2 sets a threshold for high amplitude noise cancelling ----------#
