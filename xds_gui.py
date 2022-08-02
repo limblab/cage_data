@@ -11,6 +11,9 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import filedialog as fd
 from cage_data import cage_data  # needs to be in the same folder
+import numpy as np
+from scipy.stats import mode
+from matplotlib import pyplot as plt
 
 
 # define the class holding all of the information about the window etc
@@ -23,7 +26,6 @@ class xds_gui(tk.Frame):
     """
     def __init__(self, parent):
         super().__init__(parent) # refer to Python docs for info about class inheretance
-        self.grid()
 
         # initialize the xds
         self.xds = cage_data()
@@ -59,12 +61,17 @@ class xds_gui(tk.Frame):
         
         self.file_frame.grid(row=0, column=0, padx=5, pady=5, columnspan=2)
 
-        # # binning data
-        # self.bin_frame = tk.LabelFrame(self, text='Bin Data')
+        # binning data
+        self.bin_frame = tk.LabelFrame(self, text='Bin Data')
+        self.bin_label = ttk.Label(self.bin_frame, text='Bin Size (ms)')
+        self.bin_label.grid(row=0, column=0, pady=5, padx=5)
+        self.bin_size = tk.StringVar()
+        self.bin_size_txt = ttk.Entry(self.bin_frame, state='disabled', textvariable=self.bin_size)
+        self.bin_size_txt.grid(row=0, column=1, ipadx = 10, pady=5, padx=5)
+        self.bin_button = ttk.Button(self.bin_frame, text='Bin Data', state='disabled', command=self.bin_data)
+        self.bin_button.grid(row=0, column=2, padx=5, pady=5)
         
-
-
-        # self.bin_frame.grid(row=1, column=0, padx=5, pady=5, columnspan=2)
+        self.bin_frame.grid(row=1, column=0, padx=5, pady=5, columnspan=2)
 
         # plot data
         self.plot_frame = tk.LabelFrame(self, text='Plotting')
@@ -77,24 +84,11 @@ class xds_gui(tk.Frame):
 
         self.plot_frame.grid(row=2, column=0, padx=5, pady=5, columnspan=2)
 
-        # # --------------------------------------------------------------
-        # # metadata -- monkey name, task name
-        # self.meta_frame = tk.LabelFrame(self, text='Meta Data')
-        # self.monkey = tk.StringVar()
-        # self.monkey_menu = tk.Menubutton(self.meta_frame, text='Monkey Name')
-        # self.monkey_menu.grid()
-        # self.monkey_menu.menu = tk.Menu(self.meta_frame)
-        # self.monkey_menu.menu.add
-        # # self.monkey_options = tk.Menu(self.meta_frame).grid()
-        # # self.monkey_options.add_command(label='Pop', command=lambda:self.monkey.set('Pop'))
-        # # self.monkey_menu = tk.Menubutton(self.meta_frame, text='Monkey Name', menu=self.monkey_options).grid(row=0, column=0, padx=10, pady=10)
-
-        # self.meta_frame.grid(row=1, column=0, padx=5, pady=5)
-
-
 
         self.save_button = ttk.Button(self, text='Save', command=self.save_xds, state='disabled')
         self.save_button.grid(row=3, column=1, padx=5, pady=5)
+
+        self.grid()
 
 
 
@@ -113,8 +107,29 @@ class xds_gui(tk.Frame):
         mot_fn = self.mot_fn.get()
 
         self.xds.create(nev_fn, rhd_file=emg_fn, mot_file=mot_fn)
-        self.save_button.state('normal')
+
+        # if it has .mot files, that will determine the bin size
+        if self.xds.has_mot:
+            self.bin_size.set(np.round(mode(np.diff(self.xds.mot_timestamps))[0][0] * 1000))
+            self.bin_button['state'] = 'normal'
+        else:  # otherwise allow the user to choose
+            self.bin_size_txt['state'] = 'normal'
+            self.bin_size.set(str(50)) # default 50 ms
+            self.bin_button['state'] = 'normal'
+
         
+        self.save_button['state'] = 'normal'
+        
+
+    def bin_data(self): # just runs the cage_data.bin_data function, turns off some stuff
+        bin_sz = float(self.bin_size.get())  # bin size for the conversion process
+        self.xds.bin_data(bin_size=bin_sz)
+
+        self.bin_plot_button['state'] = 'normal' # turn on the plot buttons
+
+    def plot_binned(self):
+        fig_bin,fig_ax = plt.subplots() # plotting
+
 
 
 
@@ -123,13 +138,14 @@ class xds_gui(tk.Frame):
         nev_fn = self.nev_fn.get() # get the stored nev filename
         nev_path, nev_fn = path.split(nev_fn)
         nev_fn, _ = path.splitext(nev_fn)
+        print(nev_fn)
 
 
         save_fn = fd.asksaveasfilename(master=self,\
-            confirmoverwrite=True, filetypes=(['Pickle','.pkl']),\
-            initialdir=nev_path, initialfile= nev_fn.join('.pkl') )
-        
-        self.xds.save_to_pickle()
+            confirmoverwrite=True, filetypes=[('Pickle','.pkl')],\
+            initialdir=nev_path, initialfile= nev_fn )
+        save_path, save_fn = path.split(save_fn)
+        self.xds.save_to_pickle(save_path, save_fn)
 
 
 
@@ -138,7 +154,7 @@ class xds_gui(tk.Frame):
 # initialize the window
 if __name__ == "__main__":
     root = tk.Tk() # root tk 
-    root.geometry("500x250")
+    # root.geometry("500x250")
     frm = xds_gui(root) # create the base xds window
 
     # run the whole thing

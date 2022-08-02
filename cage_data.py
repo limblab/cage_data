@@ -184,15 +184,14 @@ class cage_data:
             else:
                 self.read_behavior_tags_excel(path, file_list[0])       
 
-
-        
+        # motion tracking -- from openSim
         if mot_file:
             self.has_mot = 1 # set a flag
-            self.mot_timestamps, self.mot_data, self.mot_names = self.parse_mot_file(os.path.join(os.path.join(mot_file)))
+            self.parse_mot_file(os.path.join(os.path.join(mot_path,mot_file)))
         else:
             self.has_mot = 0
-        
-        
+
+        # give an update 
         self.pre_processing_summary()
         
         
@@ -450,17 +449,31 @@ class cage_data:
 
             # bring in all of the data
             col_headers = mot_file.readline() # column headers
-            data = np.array([line.split('\t') for line in mot_file.readlines()]) # the rest of the file parsed into a numpy array
+            data = np.array([line.split('\t') for line in mot_file.readlines()], dtype=float) # the rest of the file parsed into a numpy array
 
-            if data.shape != [nrows,ncols]:
+            if data.shape != [n_rows,n_cols]:
+                print(f"n_rows: {n_rows}, n_cols: {n_cols}, data_shape: {data.shape}")
                 print('Warning: Data from .mot table not sized as expected')
             
             # separate timestamps from everything else.
 
-            timestamps = data[:,0] 
+            timestamps = data[:,0]
             track_loc = data[:,1:]
 
-            return col_headers, track_loc, timestamps
+            # check for sync signals
+            if 'video_sync' in self.analog.keys():
+                offset = self.analog['video_sync_timeframe']\
+                    [np.where(np.diff(self.analog['video_sync'])>0)[0]]
+                timestamps = timestamps + offset
+            else:
+                print('No video sync found. mot_data will not be aligned!')
+
+            # put it into the xds. 
+            self.mot_data = track_loc
+            self.mot_timestamps = timestamps
+            self.mot_names = col_headers
+
+
     
     def clean_cortical_data(self, K1 = 8, K2 = 8):
         # ---------- K1 and K2 sets a threshold for high amplitude noise cancelling ----------#
@@ -563,6 +576,7 @@ class cage_data:
             else:
                 self.has_EMG = 0
         self.binned['timeframe'], self.binned['spikes'] = self.bin_spikes(bin_size, mode)
+
         if self.has_EMG == 1:
             self.binned['filtered_EMG'] = self.EMG_downsample(1/bin_size)
             truncated_len = min(len(self.binned['filtered_EMG'][0]), len(self.binned['spikes'][0]))
@@ -571,11 +585,18 @@ class cage_data:
             for (i, each) in enumerate(self.binned['filtered_EMG']):
                 self.binned['filtered_EMG'][i] = each[:truncated_len]
             self.binned['timeframe'] = self.binned['timeframe'][:truncated_len]
-        if hasattr(self, 'analog'):
+
+        if 'FSR_data' in self.analog: # might have analog but not FSR. making it specific
             self.binned['FSR_data'] = self.FSR_data_downsample(1/bin_size)
         self.is_data_binned = True
+
+        if self.has_mot: # this should be at the final binning frequency, me thinks
+            self.binned['mot_data'] = self.mot_data
+
         print('Data have been binned.')
-    
+
+
+
     def smooth_binned_spikes(self, kernel_type, kernel_SD, sqrt = 0):
         smoothed = []
         if self.binned:
@@ -605,10 +626,15 @@ class cage_data:
             print('Bin spikes first!')
             
     def save_to_pickle(self, save_path, file_name):
-        if save_path[-1] == '/':
-            save_name = save_path + file_name + '.pkl'
-        else:
-            save_name = save_path + '/' + file_name + '.pkl'
+
+        # if it doesn't have an extension on the end
+        if not os.path.splitext(file_name)[1]:
+            file_name = file_name.join('.pkl')
+        
+        # combine the path and the filename in the appropriate manner
+        save_name = os.path.join(save_path, file_name)
+
+        # write it 
         with open (save_name, 'wb') as fp:
             pickle.dump(self, fp)
         print('Save to %s successfully \n' %(save_name))
