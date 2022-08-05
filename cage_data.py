@@ -22,6 +22,9 @@ from cage_data_utils import find_force_onset
 from cage_data_utils import validate_sync_pulse
 from cage_data_utils import read_video_timeframe_from_txt
 
+# sklearn stuff for the wiener filter etc
+from sklearn import linear_model, model_selection, metrics
+
 Pop_EMG_names_single = ['APB_1', 'Lum_1', 'PT_1', '1DI_1',
                         'FDP2_1', 'FCR1_1', 'FCU1_1', 'FCUR_1',
                         'FCUR_2', 'FCU1_2',	'FCR1_2', 'FDP2_2', 
@@ -51,6 +54,7 @@ class cage_data:
         self.meta['Processes at'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         print('An empty cage_data object has been created.')
         
+    # --------------------------------         
     def create(self,  nev_file, path = None, rhd_file = '', rhd_path = None,   
                is_sorted = 0, empty_channels = [],      
                bad_EMG = [], do_notch = 1, comb_filter = 0,
@@ -59,7 +63,7 @@ class cage_data:
         'nev_mat_file' is the neural data filename,
         'rhd_file' is the EMG data filename
         'mot_file' is the motion tracking filename
-
+        
         Required data files. Set 'rhd_file' as ' ' if no wireless EMG recordings
         Is the nev file sorted? Any empty channel?
         Whether apply notch filter? Should remove bad EMG channels?
@@ -67,8 +71,18 @@ class cage_data:
         .mot file if doing motion tracking
 
 
+        if 'path' is specified, it will look for the .nev inside of the path.
+        Otherwise it will first look to see if the file name contains a path, and if
+        not will look inside of the current working directory.
 
+        if 'rhd_path' is specified, it will look for the .rhd at that location.
+        backup order: specified full path inside of file name, located in the same
+        spot as the nev file, and finally in the current working directory.
 
+        if 'rhd_path' is specified, it will look for the .rhd at that location.
+        backup order: specified full path inside of file name, located in the same
+        spot as the nev file, and finally in the current working directory.
+        
 
         """
         self.is_sorted = is_sorted
@@ -88,7 +102,7 @@ class cage_data:
                 mot_path = path
         
 
-        if nev_file[-4:] != '.nev':
+        if os.path.splitext[-1] != 'nev': # cleaner than using string manipulation
             nev_file = nev_file + '.nev'
         # -------- Read the nev file -------- #
         self.parse_nev_file(os.path.join(path,nev_file), is_sorted, empty_channels)
@@ -97,10 +111,7 @@ class cage_data:
             print('No wireless EMGs recorded during this session')
         else:
             self.has_EMG = 1
-            self.EMG_names, self.EMG_diff, self.EMG_timeframe = self.parse_rhd_file(os.path.join(rhd_path, rhd_file), 
-                                                                                    do_notch, 
-                                                                                    bad_EMG,
-                                                                                    comb_filter)
+            self.parse_rhd_file(os.path.join(rhd_path, rhd_file), do_notch, bad_EMG, comb_filter)
             print(self.EMG_names)
         
         # -------- To check if any .nsx file along with the nev file -------- #     
@@ -195,6 +206,7 @@ class cage_data:
         self.pre_processing_summary()
         
         
+    # --------------------------------         
     def pre_processing_summary(self):
         if hasattr(self, 'is_sorted'):
             if self.is_sorted == 1:
@@ -211,6 +223,7 @@ class cage_data:
         if hasattr(self, 'is_spike_smoothed'):
             print('Spikes smoothed? -- %s' %(self.is_spike_smoothed))
 
+    # --------------------------------         
     def parse_nev_file(self, file_name, is_sorted, empty_channels):
         time_s = time.time()
         
@@ -278,6 +291,7 @@ class cage_data:
         time_e = time.time()
         print('Parsing the nev file took %.3f s'%(time_e - time_s))
     
+    # --------------------------------         
     def parse_nsx_file(self, file_name):
         NsxFileObj = NsxFile(file_name)
         header = NsxFileObj.extended_headers
@@ -297,6 +311,7 @@ class cage_data:
         nsx_duration = data['data_time_s']
         return analog, nsx_duration        
    
+    # --------------------------------         
     def parse_ns6_file(self, file_name):
         ns6_file_name = file_name[:-4]+'.ns6'
         if os.path.exists(ns6_file_name) == False:
@@ -324,6 +339,7 @@ class cage_data:
             self.ns6_duration = _raw_data['data_time_s']
             return raw_data
         
+    # --------------------------------         
     def parse_rhd_file(self, filename, notch, bad_EMG, comb_filter):
         rhd_data = read_data(filename)
         if self.date_num < 20190701:
@@ -404,8 +420,13 @@ class cage_data:
         ds = int(d0[0])
         de = int(d1[-1])
         rhd_timeframe = np.arange(de-ds+1)/self.EMG_fs
-        return EMG_names, list(EMG_diff[:, ds:de]), rhd_timeframe
+
+        # update the class instance
+        self.EMG_names = EMG_names
+        self.EMG_diff = list(EMG_diff[:, ds:de])
+        self.EMG_timeframe = rhd_timeframe
         
+    # --------------------------------         
     def parse_mot_file(self, filename):
         '''
         Bringing in the joint information from OpenSim for the motion tracking
@@ -451,7 +472,7 @@ class cage_data:
             col_headers = mot_file.readline() # column headers
             data = np.array([line.split('\t') for line in mot_file.readlines()], dtype=float) # the rest of the file parsed into a numpy array
 
-            if data.shape != [n_rows,n_cols]:
+            if data.shape != (n_rows,n_cols):
                 print(f"n_rows: {n_rows}, n_cols: {n_cols}, data_shape: {data.shape}")
                 print('Warning: Data from .mot table not sized as expected')
             
@@ -463,18 +484,17 @@ class cage_data:
             # check for sync signals
             if 'video_sync' in self.analog.keys():
                 offset = self.analog['video_sync_timeframe']\
-                    [np.where(np.diff(self.analog['video_sync'])>0)[0]]
+                    [np.where(np.diff(self.analog['video_sync'])>1000)[0][0]]
                 timestamps = timestamps + offset
             else:
                 print('No video sync found. mot_data will not be aligned!')
 
-            # put it into the xds. 
+            # put it into the cage_data. 
             self.mot_data = track_loc
             self.mot_timestamps = timestamps
             self.mot_names = col_headers
 
-
-    
+    # --------------------------------         
     def clean_cortical_data(self, K1 = 8, K2 = 8):
         # ---------- K1 and K2 sets a threshold for high amplitude noise cancelling ----------#
         if hasattr(self, 'thresholds'):
@@ -492,6 +512,7 @@ class cage_data:
         else:
             print('This function may not be applied to this version of data file.')
 
+    # --------------------------------         
     def EMG_filtering(self, f_Hz):
         fs = self.EMG_fs
         raw_EMG_data = self.EMG_diff
@@ -507,6 +528,7 @@ class cage_data:
         print('All EMG channels have been filtered.')
         self.is_EMG_filtered = True
             
+    # --------------------------------         
     def bin_spikes(self, bin_size, mode = 'center'):
         print('Binning spikes with %.4f s' % (bin_size))
         binned_spikes = []
@@ -525,10 +547,17 @@ class cage_data:
             each = each.reshape((len(each),))
             out, _ = np.histogram(each, bins)
             binned_spikes.append(out)
-        return bins[1:], binned_spikes        
-      
+        
+        # save it into the structure
+        self.binned['timestamps'] = bins[1:]            # times
+        self.binned['spikes'] = binned_spikes           # spiking firing rates
+        self.binned['spikes_labels'] = self.elec_label  # labels
+
+
+    # --------------------------------         
     def EMG_downsample(self, new_fs):
         if hasattr(self, 'filtered_EMG'):
+            self.binned['filtered_EMG_labels'] = self.EMG_names # just copy it on over
             down_sampled = []
             n = self.EMG_fs/new_fs
             length = int(np.floor(np.size(self.filtered_EMG[0])/n))
@@ -539,12 +568,17 @@ class cage_data:
                 temp = np.asarray(temp)
                 down_sampled.append(temp)
             print('Filtered EMGs have been downsampled')
-            return down_sampled
+            self.binned['filtered_EMG'] = down_sampled
+            # return down_sampled
         else:
             print('Filter EMG first!')
             return 0
         
+    # --------------------------------         
     def FSR_data_downsample(self, new_fs):
+        '''
+        new_fs      new sampling frequency. 
+        '''
         if 'FSR_data' in self.analog.keys():
             if 'FSR_data_timeframe' in self.analog.keys():
                 fs = 1/stats.mode(np.diff(self.analog['FSR_data_timeframe']))[0][0]
@@ -562,23 +596,36 @@ class cage_data:
                 temp = np.asarray(temp)
                 down_sampled.append(temp)
             print('FSR data have been downsampled')
-            return down_sampled
+            self.binned['FSR_data'] = down_sampled
+            # return down_sampled
         else:
             print('There is no FSR data in this dataset, please check')
             return 0
         
+    # --------------------------------         
     def bin_data(self, bin_size, mode = 'center'):
+        '''
+        bin_size    length of the bin (in seconds)
+        mode        binning mode: left, center [default], right
+
+        '''
         if not hasattr(self, 'binned'):
             self.binned = {}
+        
+        # EMG flags
         if not hasattr(self, 'has_EMG'):
             if hasattr(self, 'EMG_names'):
                 self.has_EMG = 1
             else:
                 self.has_EMG = 0
-        self.binned['timeframe'], self.binned['spikes'] = self.bin_spikes(bin_size, mode)
+
+        # bin those spikes, save into the class
+        self.bin_spikes(bin_size, mode) 
+
 
         if self.has_EMG == 1:
-            self.binned['filtered_EMG'] = self.EMG_downsample(1/bin_size)
+            # self.binned['filtered_EMG'] = self.EMG_downsample(1/bin_size)
+            self.EMG_downsample(1/bin_size)
             truncated_len = min(len(self.binned['filtered_EMG'][0]), len(self.binned['spikes'][0]))
             for (i, each) in enumerate(self.binned['spikes']):
                 self.binned['spikes'][i] = each[:truncated_len]
@@ -587,16 +634,17 @@ class cage_data:
             self.binned['timeframe'] = self.binned['timeframe'][:truncated_len]
 
         if 'FSR_data' in self.analog: # might have analog but not FSR. making it specific
-            self.binned['FSR_data'] = self.FSR_data_downsample(1/bin_size)
+            # self.binned['FSR_data'] = self.FSR_data_downsample(1/bin_size)
+            self.FSR_data_downsample(1/bin_size)
         self.is_data_binned = True
 
         if self.has_mot: # this should be at the final binning frequency, me thinks
+            temp = np.zeros()
             self.binned['mot_data'] = self.mot_data
 
         print('Data have been binned.')
 
-
-
+    # --------------------------------         
     def smooth_binned_spikes(self, kernel_type, kernel_SD, sqrt = 0):
         smoothed = []
         if self.binned:
@@ -625,6 +673,7 @@ class cage_data:
         else:
             print('Bin spikes first!')
             
+    # --------------------------------         
     def save_to_pickle(self, save_path, file_name):
 
         # if it doesn't have an extension on the end
@@ -639,6 +688,7 @@ class cage_data:
             pickle.dump(self, fp)
         print('Save to %s successfully \n' %(save_name))
         
+    # --------------------------------         
     def ximea_video_sync(self):
         if 'video_sync' in self.analog.keys():
            if 'video_sync_timeframe' not in self.analog.keys():
@@ -660,6 +710,7 @@ class cage_data:
             video_timestamps = 0
         return video_timestamps
                                 
+    # --------------------------------         
     def clean_cortical_data_with_classifier(self, template_file_path, template_file):
         if template_file_path[-1] != '/':
             template_file_path = template_file_path + '/'
@@ -683,6 +734,7 @@ class cage_data:
                     self.waveforms[i] = np.delete(self.waveforms[i], bad_idx, axis = 0)
                     self.spikes[i] = np.delete(self.spikes[i], bad_idx)   
     
+    # --------------------------------         
     def get_EMG_idx(self, EMG_list):
         e_flag = False
         if 'EMG' in self.EMG_names[0]:
@@ -696,6 +748,7 @@ class cage_data:
             idx.append(np.where(EMG_names == each)[0])
         return np.asarray(idx).reshape((len(idx), ))
           
+    # --------------------------------         
     def apply_comb_filter(self, input_signal, fs, f_list = [120, 180, 240, 300, 360], Q = 30):
         """
         Here input_signal is a list
@@ -711,6 +764,7 @@ class cage_data:
                 output_signal[i] = signal.filtfilt(b[j], a[j], input_signal[i])
         return output_signal
 
+    # --------------------------------         
     def EMG_art_rej(self, data_list, k = 8, L = 8):
         print('Rejecting high amplitude EMG artifacts.')
         data_list_post = []
@@ -728,6 +782,7 @@ class cage_data:
             data_list_post.append(data)
         return data_list_post     
                 
+    # --------------------------------         
     def EMG_art_rej_single_channel(self, data, k = 8, L = 8):
         #print('Rejecting high amplitude EMG artifacts on single channel.')
         c = np.where(abs(data)>k*np.std(data))[0]
@@ -742,6 +797,7 @@ class cage_data:
         data[u_idx] = subs
         return data             
 
+    # --------------------------------         
     def get_elec_idx(self, elec_num):
         """
         To get the idx of electrodes specified by elec_num
@@ -754,6 +810,7 @@ class cage_data:
                 idx.append(temp)
         return idx
 
+    # --------------------------------         
     def del_bad_chs(self, elec_num):
         """
         To get rid of everything about the bad channels from the data structure
@@ -767,6 +824,7 @@ class cage_data:
             del(self.spikes[idx])
             del(self.elec_label[idx])
     
+    # --------------------------------         
     def find_pg_force_onset(self, ch, thr = 0.4):
         if 'FSR_data' in self.analog.keys():
             ft = self.analog['FSR_data_timeframe']
@@ -786,6 +844,7 @@ class cage_data:
             print('No FSR data in this file')
             return []
     
+    # --------------------------------         
     def read_behavior_tags_bento(self, path, file_name):
         self.behave_event = {}
         self.behave_tags = {'tag':[], 'start_time': [], 'end_time': []}
@@ -806,6 +865,7 @@ class cage_data:
         if 'pg' in behave_frame.keys():
             self.behave_event['pg_force_onset'] = self.find_pg_force_onset(0, 0.4)
             
+    # --------------------------------         
     def read_behavior_tags_bento_txt(self, path, file_name):
         self.behave_event = {}
         self.behave_tags = {'tag':[], 'start_time': [], 'end_time': []}
@@ -827,6 +887,7 @@ class cage_data:
         if 'pg' in behave_frame.keys():
             self.behave_event['pg_force_onset'] = self.find_pg_force_onset(0, 0.4)
             
+    # --------------------------------         
     def read_behavior_tags_excel(self, path, file_name):
         """
         Reading in the type and the timing for each behavior segment from an xls file
@@ -853,6 +914,7 @@ class cage_data:
         if 'pg' in self.behave_tags['tag']:
            self.behave_event['pg_force_onset'] = self.find_pg_force_onset(0, 0.4) 
             
+    # --------------------------------         
     def get_behave_segment(self, name, time1, time2, requires_raw_EMG = False, requires_spike_timing = False, requires_30k = False):
         # -------- determine if the name is from behave tags or behave events -------- #
         if hasattr(self, 'behave_event'):
@@ -904,9 +966,33 @@ class cage_data:
                     behave_dict['30k'] = self.raw_data['data'][idx_30k, :3]
                 behave_dict_all.append(behave_dict)
         return behave_dict_all
-                
-                
-        
+
+    # --------------------------------         
+    # Wiener filter -- allows for basic non-linearities 
+    def filter_builder(self, out_type='EMG', out_labels=None, nonlinearity=None):
+        '''
+        Builds a linear filter between binned threshold crossings and the 
+        listed outputs. 
+
+        out_type:           type of data to predict
+        out_labels:         which of those to predict (ie FCRu, Fx, or PIP_tra1)
+        nonlinearity:       None, 'Poly' for polynomial, or 'Exp' for exponential
+        '''
+
+        # input flag parsing
+        if out_type == 'EMG':
+            out_type = 'filtered_EMG'
+        if out_type == 'mot':
+            out_type = 'mot_data'
+        if out_type is None:
+            out_type = 'filtered_EMG'
+
+        binned_list = [key for key in self.binned.keys() if key not in ['timestamps','spikes']]
+        if out_type not in binned_list:
+            print(f"{out_type} not in binned data. This caged_data has only {binned_list}. Check for typos!")
+            return -1
+
+
         
         
         

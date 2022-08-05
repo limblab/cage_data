@@ -107,7 +107,7 @@ class xds_gui(tk.Frame):
         self.grid()
 
 
-
+    # -------------------------
     def fn_update(self, box):
         if box == 'nev':
             self.nev_fn.set(fd.askopenfilename(filetypes=[('Neural Event','*.nev')]))
@@ -119,6 +119,7 @@ class xds_gui(tk.Frame):
             self.exist_fn.set(fd.askopenfilename(filetypes=[('Cage Data pickle', '*.pkl')]))
 
 
+    # -------------------------
     def convert_xds(self):
         # get any of the stored filenames
         nev_fn = self.nev_fn.get() # get the stored nev filename
@@ -139,6 +140,7 @@ class xds_gui(tk.Frame):
         self.exist_browse['state'] = 'disabled'
         self.exist_entry['state'] = 'disabled'
         self.exist_open['state'] = 'disabled'
+        self.convert_button['state'] = 'disabled'
 
 
 
@@ -155,6 +157,7 @@ class xds_gui(tk.Frame):
         self.save_button['state'] = 'normal'
 
 
+    # -------------------------
     # open existing xds
     def open_existing(self):
         with open(self.exist_fn.get(), 'rb') as file:
@@ -170,14 +173,17 @@ class xds_gui(tk.Frame):
         self.exist_browse['state'] = 'disabled'
         self.exist_entry['state'] = 'disabled'
         self.exist_open['state'] = 'disabled'
+        self.convert_button['state'] = 'disabled'
 
-
+    # -------------------------
     def bin_data(self): # just runs the cage_data.bin_data function, turns off some stuff
-        bin_sz = float(self.bin_size.get())  # bin size for the conversion process
+        bin_sz = float(self.bin_size.get())/1000  # bin size for the conversion process
         self.xds.bin_data(bin_size=bin_sz)
 
         self.bin_plot_button['state'] = 'normal' # turn on the plot buttons
 
+
+    # -------------------------
     def plot_binned(self):
         '''
         Plot binned data -- will check to see what binned data we have,
@@ -204,8 +210,7 @@ class xds_gui(tk.Frame):
         # fig_bin,fig_ax = plt.subplots() # plotting
 
 
-
-
+    # -------------------------
     def save_xds(self):
         # just a wrapper for the save_to_pickle function
         nev_fn = self.nev_fn.get() # get the stored nev filename
@@ -221,10 +226,8 @@ class xds_gui(tk.Frame):
         self.xds.save_to_pickle(save_path, save_fn)
 
     
+    # -------------------------
     def reinit_xds(self):
-        # reset the xds
-
-        # --------------------------------------------------------------
         # reinitialize file selection
         self.nev_fn.set('')
         self.nev_select['state'] = 'normal'
@@ -237,7 +240,6 @@ class xds_gui(tk.Frame):
         self.exist_entry['state'] = 'normal'
         self.exist_open['state'] = 'normal'
         
-
         # binning data
         self.bin_size.set('')
         self.bin_size_txt['state'] = 'disabled'
@@ -252,9 +254,7 @@ class xds_gui(tk.Frame):
         self.grid()
 
 
-
-
-
+# ------------------------------------------
 # initialize the window
 if __name__ == "__main__":
     root = tk.Tk() # root tk 
