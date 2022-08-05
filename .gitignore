@@ -1,0 +1,6 @@
+# pre-compiled cython files
+*.pyc
+
+# data files of various varieties
+*.mat
+*.pkl
