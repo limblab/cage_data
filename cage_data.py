@@ -120,7 +120,7 @@ class cage_data:
         else:
             analog_list = []
             for each in file_list:
-                data, duration = self.parse_nsx_file(path + each)
+                data, duration = self.parse_nsx_file(os.path.join(path,each))
                 analog_list.append(data)
                 nsx_durations.append(duration)
         self.analog = {}
