@@ -24,6 +24,7 @@ from cage_data_utils import read_video_timeframe_from_txt
 
 # sklearn stuff for the wiener filter etc
 from sklearn import linear_model, model_selection, metrics
+from scipy.optimize import least_squares
 
 Pop_EMG_names_single = ['APB_1', 'Lum_1', 'PT_1', '1DI_1',
                         'FDP2_1', 'FCR1_1', 'FCU1_1', 'FCUR_1',
@@ -974,9 +975,18 @@ class cage_data:
         Builds a linear filter between binned threshold crossings and the 
         listed outputs. 
 
+        INPUTS
         out_type:           type of data to predict
         out_labels:         which of those to predict (ie FCRu, Fx, or PIP_tra1)
-        nonlinearity:       None, 'Poly' for polynomial, or 'Exp' for exponential
+        nonlinearity:       None, 'poly' for polynomial, or 'exp' for exponential
+
+        OUTPUTS
+        mdl:                sklearn.Linear_Model for the linear prediction
+        [mdl_nonlin]:       array of coefficients for a nonlinearity, one for each predicted signal. 
+                                only returned if nonlinearity is not None
+        vaf_train:          Training VAF (metrics.r2_score)
+        vaf_test:           Testing VAF (metrics.r2_score)
+
         '''
 
         # input flag parsing
@@ -987,10 +997,21 @@ class cage_data:
         if out_type is None:
             out_type = 'filtered_EMG'
 
+        # check that the desired "train-on" set is available
         binned_list = [key for key in self.binned.keys() if key not in ['timestamps','spikes']]
         if out_type not in binned_list:
             print(f"{out_type} not in binned data. This caged_data has only {binned_list}. Check for typos!")
             return -1
+
+        # make sure the linearity flag is correct
+        if nonlinearity not in [None, 'poly', 'Poly', 'exp', 'Exp']:
+            if nonlinearity in ['Poly','Polynomial','polynomial']:
+                nonlinearity = 'poly'
+            elif nonlinearity in ['Exp','exponential','Exponential']:
+                nonlinearity = 'exp'
+            else:
+                print(f"nonlinearity value {nonlinearity} is not supported")
+                return -1
 
         # split into train/test sets based on the percentage given
         mdl = linear_model.LinearRegression()
@@ -1001,17 +1022,58 @@ class cage_data:
         wiener_train = np.zeros((train_neur.shape[0],train_neur.shape[1]*n_lags))
         wiener_test = np.zeros((test_neur.shape[0],test_neur.shape[1]*n_lags))
         for ii in np.arange(n_lags):
-            wiener_train[ii:,ii*train_neur.shape[1]] = train_neur[:ii] # training set
-            wiener_test[ii:,ii*train_neur.shape[1]] = test_neur[:ii] # test set
+            ind_start = ii*train_neur.shape[1]
+            ind_end = (ii+1)*train_neur.shape[1]
+            wiener_train[ii:,ind_start:ind_end] = train_neur[:ii] # training set
+            wiener_test[ii:,ind_start:ind_end] = test_neur[:ii] # test set
 
 
         # build the model
         mdl.fit(x=wiener_train, y=train_out)
 
+        # predictions on testing set
+        train_pred = mdl.predict(wiener_train)
+        test_pred = mdl.predict(wiener_test)
+
         # spit out the VAFs on the test set
-        linear_vafs = metrics.r2_score(test_out, mdl.predict(wiener_test), multioutput='raw_values')
+        if not nonlinearity:
+            train_vafs = metrics.r2_score(train_out, train_pred, multioutput='raw_values')
+            test_vafs = metrics.r2_score(test_out, test_pred, multioutput='raw_values')
+            return mdl, train_vafs, test_vafs
         
         # train any non-linearity
+        mdl_nonlin = []
+        nonlin_pred = np.zeros(train_pred.shape)
+
+        for ii in np.arange(train_pred.shape[1]): # for each individual signal
+            mdl_nonlin[:,ii] = least_squares(self.non_linearity_residuals,\
+                 [0.1, 0.1, 0.1], args=(train_pred[:,ii],train_out[:,ii], nonlinearity)).x
+            train_pred_nonlin = self.non_linearity(mdl_nonlin[:,ii], train_pred[:,ii], nonlinear_type=nonlinearity)
+            test_pred_nonlin = self.non_linearity(mdl_nonlin[:,ii], test_pred[:,ii], nonlinear_type=nonlinearity)
+            train_vafs = metrics.r2_score(train_out[:,ii], train_pred_nonlin, multioutput='raw_values')
+            test_vafs = metrics.r2_score(test_out[:,ii], test_pred_nonlin, multioutput='raw_values')
 
 
-        
+        return mdl, mdl_nonlin, train_vafs, test_vafs
+    
+
+    # using scipy's least_squares:
+    def non_linearity(coeff, y_train, nonlinear_type):
+        """
+        calculates nonlinear predictions for either polynomial or exponential nonlinearities
+        """
+        if nonlinear_type == 'poly':
+            return coeff[0] + coeff[1]*y_train + coeff[2]*y_train**2
+        elif nonlinear_type == 'exponential':
+            return coeff[0]*np.exp(coeff[1]*y_train) + coeff[2]
+        else:
+            return -1
+
+    def non_linearity_residuals(coeff, y_pred, y_act, nonlinear_type):
+        if nonlinear_type == 'poly':
+            return y_act - (coeff[0] + coeff[1]*y_pred + coeff[2]*y_pred**2)
+        elif nonlinear_type == 'exponential':
+            return y_act - (coeff[0]*np.exp(coeff[1]*y_pred) + coeff[2])
+        else:
+            return -1
+
