@@ -103,9 +103,10 @@ class cage_data:
                 mot_path = path
         
 
-        if os.path.splitext[-1] != 'nev': # cleaner than using string manipulation
+        if os.path.splitext(nev_file)[-1] != '.nev': # cleaner than using string manipulation
             nev_file = nev_file + '.nev'
         # -------- Read the nev file -------- #
+        print(os.path.join(path,nev_file))
         self.parse_nev_file(os.path.join(path,nev_file), is_sorted, empty_channels)
         # -------- To check whether rhd_file is along with the nev file -------- #
         if rhd_file == '':
@@ -116,12 +117,12 @@ class cage_data:
             print(self.EMG_names)
         
         # -------- To check if any .nsx file along with the nev file -------- #     
-        file_list = fnmatch.filter(os.listdir( path ), nev_file[:-4] + '.ns*')
+        file_list = fnmatch.filter(os.listdir( path ), os.path.splitext(nev_file)[0] + '.ns*')
         # -------- To check .ns6 file first -------- #
-        if nev_file[:-4] + '.ns6' in file_list:
-            self.raw_data = self.parse_ns6_file(path + nev_file[:-4] + '.ns6')
+        if os.path.splitext(nev_file)[0] + '.ns6' in file_list:
+            self.raw_data = self.parse_ns6_file(path + os.path.splitext(nev_file)[0] + '.ns6')
             print('Raw data (fs = 30kHz) was recorded along with spike data in this session!')
-            file_list.remove(nev_file[:-4] + '.ns6')
+            file_list.remove(os.path.splitext(nev_file)[0] + '.ns6')
         else:
             print('No raw data along with this recording session.')
         # -------- To check .nsx file (ns1 - ns5) -------- #
@@ -550,7 +551,7 @@ class cage_data:
             binned_spikes.append(out)
         
         # save it into the structure
-        self.binned['timestamps'] = bins[1:]            # times
+        self.binned['timeframe'] = bins[1:]            # times
         self.binned['spikes'] = binned_spikes           # spiking firing rates
         self.binned['spikes_labels'] = self.elec_label  # labels
 
@@ -998,7 +999,7 @@ class cage_data:
             out_type = 'filtered_EMG'
 
         # check that the desired "train-on" set is available
-        binned_list = [key for key in self.binned.keys() if key not in ['timestamps','spikes']]
+        binned_list = [key for key in self.binned.keys() if key not in ['timeframe','spikes']]
         if out_type not in binned_list:
             print(f"{out_type} not in binned data. This caged_data has only {binned_list}. Check for typos!")
             return -1
