@@ -969,7 +969,7 @@ class cage_data:
 
     # --------------------------------         
     # Wiener filter -- allows for basic non-linearities 
-    def filter_builder(self, out_type='EMG', out_labels=None, nonlinearity=None):
+    def filter_builder(self, out_type='EMG', out_labels=None, n_lags=5, nonlinearity=None, train_length=.9):
         '''
         Builds a linear filter between binned threshold crossings and the 
         listed outputs. 
@@ -992,7 +992,26 @@ class cage_data:
             print(f"{out_type} not in binned data. This caged_data has only {binned_list}. Check for typos!")
             return -1
 
+        # split into train/test sets based on the percentage given
+        mdl = linear_model.LinearRegression()
+        train_neur, test_neur = model_selection.train_test_split(self.binned['spikes'])
+        train_out, test_out = model_selection.train_test_split(self.binned[out_type])
 
+        # add lags to the training and testing inputs
+        wiener_train = np.zeros((train_neur.shape[0],train_neur.shape[1]*n_lags))
+        wiener_test = np.zeros((test_neur.shape[0],test_neur.shape[1]*n_lags))
+        for ii in np.arange(n_lags):
+            wiener_train[ii:,ii*train_neur.shape[1]] = train_neur[:ii] # training set
+            wiener_test[ii:,ii*train_neur.shape[1]] = test_neur[:ii] # test set
+
+
+        # build the model
+        mdl.fit(x=wiener_train, y=train_out)
+
+        # spit out the VAFs on the test set
+        linear_vafs = metrics.r2_score(test_out, mdl.predict(wiener_test), multioutput='raw_values')
         
-        
+        # train any non-linearity
+
+
         
