@@ -206,6 +206,7 @@ class cage_data:
 
         # give an update 
         self.pre_processing_summary()
+        print('cage_data structure created')
         
         
     # --------------------------------         
@@ -641,8 +642,11 @@ class cage_data:
         self.is_data_binned = True
 
         if self.has_mot: # this should be at the final binning frequency, me thinks
-            temp = np.zeros()
-            self.binned['mot_data'] = self.mot_data
+            temp = np.zeros((self.binned['timeframe'].shape[0], self.mot_data.shape[1])) # set up an empty temp array
+            offset = np.argmin((self.binned['timeframe']-self.mot_timestamps[0])**2) # find where the data starts
+            temp[offset:offset+len(self.mot_data)] = self.mot_data # fill in everything beyond that point
+            temp[len(self.binned['timestamps']):] = [] # clip off everything that's too long
+            self.binned['mot_data'] = temp # store it
 
         print('Data have been binned.')
 

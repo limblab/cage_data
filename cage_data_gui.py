@@ -99,11 +99,11 @@ class cage_data_gui(tk.Frame):
         self.plot_frame.grid(row=3, column=0, padx=5, pady=5, columnspan=2)
 
         # --------------------------------------------------------------
-        # plot data
+        # build decoder
         self.predict_frame = tk.LabelFrame(self, text='Decoders')
         
-        self.decoder_predict_button = ttk.Button(self.predict_frame, text='Build Decoder', state='disabled')
-        self.decoder_predict_button.grid(row=0, column=0, padx = 5, pady = 5, command=self.build_decoder)
+        self.decoder_predict_button = ttk.Button(self.predict_frame, text='Build Decoder', state='disabled', command=self.build_decoder)
+        self.decoder_predict_button.grid(row=0, column=0, padx = 5, pady = 5)
         self.xval_predict_button = ttk.Button(self.predict_frame, text='k-fold Xval', state='disabled')
         self.xval_predict_button.grid(row=0, column=1, padx = 5, pady = 5)
 
@@ -191,7 +191,11 @@ class cage_data_gui(tk.Frame):
         bin_sz = float(self.bin_size.get())/1000  # bin size for the conversion process
         self.cage_data.bin_data(bin_size=bin_sz)
 
+        # enable buttons
         self.bin_plot_button['state'] = 'normal' # turn on the plot buttons
+        self.decoder_predict_button['state'] = 'normal'
+        self.xval_predict_button['state'] = 'normal'
+
 
 
     # -------------------------
@@ -234,12 +238,46 @@ class cage_data_gui(tk.Frame):
         '''
 
         options_window = tk.Toplevel(self) # pop up to chose the predicted signals
-        signal_box = tk.LabelFrame(options_window)
 
+        # which data do you want to predict?
+        signal_box = tk.LabelFrame(options_window)
         binned_list = [keys for keys in self.cage_data.binned.keys() if keys not in ['spikes','timeframe']]
-        binned_button = {}
+        predict_radio = {}
+        predict_selection = tk.Variable()
+        row_locn = 0
         for binned in binned_list: # make a checkbox for each option
-            binned_button[binned] = ttk.Radiobutton(signal_box, )
+            predict_radio[binned] = ttk.Radiobutton(signal_box, text=binned, variable=predict_selection, value=binned)
+            predict_radio[binned].grid(row=row_locn, column=0, pady=5)
+            row_locn += 1 # for the next option
+        signal_box.grid(row=0, column=0, padx=10, pady=10)
+
+        # nonlinearity
+        nl_box = tk.LabelFrame(options_window)
+        nl_var = tk.Variable()
+        nl_var.set(None)
+        nl_none = ttk.Radiobutton(nl_box, text="None", variable=nl_var, value=None)
+        nl_none.grid(row=0,column=0, padx=5, pady=5)
+        nl_poly = ttk.Radiobutton(nl_box, text="Polynomial", variable=nl_var, value='poly')
+        nl_poly.grid(row=0, column=1, padx=5, pady=5)
+        nl_exp = ttk.Radiobutton(nl_box, text="Exponential", variable=nl_var, value='exp')
+        nl_exp.grid(row=0, column=2, padx=5, pady=5)
+
+        nl_box.grid(row=1, column=0, padx=10, pady=10)
+
+        # num lags        
+        lag_var = tk.Variable()
+        lag_var.set('5')
+        lag_entry = ttk.Entry(options_window, textvariable=lag_var)
+        lag_entry.grid(row=2, column=0, pady=5)
+
+
+
+        predict_button = ttk.Button(options_window, text='Build Decoder',\
+            command=self.cage_data.filter_builder(out_type=predict_selection.get(),\
+                n_lags=int(lag_entry.get()), nonlinearity=nl_var.get()))
+        predict_button.grid(row=3, column=0, padx=5, pady=5)
+        
+        
             
 
 
