@@ -119,6 +119,54 @@ class cage_data_gui(tk.Frame):
 
 
     # -------------------------
+    # enabling and disabling loading buttons
+    def load_toggle(self, enable=True):
+        if enable:
+            self.nev_entry['state'] = 'normal'
+            self.nev_fn.set('')
+            self.nev_select['state'] = 'normal'
+            self.emg_entry['state'] = 'normal'
+            self.emg_fn.set('')
+            self.emg_select['state'] = 'normal'
+            self.mot_entry['state'] = 'normal'
+            self.mot_select['state'] = 'normal'
+            self.mot_fn.set('')
+            self.exist_browse['state'] = 'normal'
+            self.exist_entry['state'] = 'normal'
+            self.exist_fn.set('')
+            self.exist_open['state'] = 'normal'
+            self.convert_button['state'] = 'normal'
+
+        else:
+            self.nev_entry['state'] = 'disabled'
+            self.nev_select['state'] = 'disabled'
+            self.emg_entry['state'] = 'disabled'
+            self.emg_select['state'] = 'disabled'
+            self.mot_entry['state'] = 'disabled'
+            self.mot_select['state'] = 'disabled'
+            self.exist_browse['state'] = 'disabled'
+            self.exist_entry['state'] = 'disabled'
+            self.exist_open['state'] = 'disabled'
+            self.convert_button['state'] = 'disabled'
+
+
+    # -------------------------
+    def bin_toggle(self, enable=True):
+        if enable:
+            # if it has .mot files, that will determine the bin size
+            if self.cage_data.has_mot:
+                self.bin_size.set(np.round(mode(np.diff(self.cage_data.mot_timestamps))[0][0] * 1000))
+                self.bin_button['state'] = 'normal'
+            else:  # otherwise allow the user to choose
+                self.bin_size_txt['state'] = 'normal'
+                self.bin_size.set(str(50)) # default 50 ms
+                self.bin_button['state'] = 'normal'
+
+        else:
+            self.bin_size_txt['state'] = 'disabled'
+            self.bin_button['state'] = 'disabled'
+
+    # -------------------------
     def fn_update(self, box):
         if box == 'nev':
             self.nev_fn.set(fd.askopenfilename(filetypes=[('Neural Event','*.nev')]))
@@ -141,28 +189,9 @@ class cage_data_gui(tk.Frame):
         self.cage_data = cage_data()
         self.cage_data.create(nev_fn, rhd_file=emg_fn, mot_file=mot_fn)
 
-        # deactivate everything -- we don't want to confuse which files we're working with
-        self.nev_entry['state'] = 'disabled'
-        self.nev_select['state'] = 'disabled'
-        self.emg_entry['state'] = 'disabled'
-        self.emg_select['state'] = 'disabled'
-        self.mot_entry['state'] = 'disabled'
-        self.mot_select['state'] = 'disabled'
-        self.exist_browse['state'] = 'disabled'
-        self.exist_entry['state'] = 'disabled'
-        self.exist_open['state'] = 'disabled'
-        self.convert_button['state'] = 'disabled'
-
-
-
-        # if it has .mot files, that will determine the bin size
-        if self.cage_data.has_mot:
-            self.bin_size.set(np.round(mode(np.diff(self.cage_data.mot_timestamps))[0][0] * 1000))
-            self.bin_button['state'] = 'normal'
-        else:  # otherwise allow the user to choose
-            self.bin_size_txt['state'] = 'normal'
-            self.bin_size.set(str(50)) # default 50 ms
-            self.bin_button['state'] = 'normal'
+        # deactivate loading, activate binning
+        self.load_toggle(enable=False)
+        self.bin_toggle(enable=True)
 
         
         self.save_button['state'] = 'normal'
@@ -175,16 +204,13 @@ class cage_data_gui(tk.Frame):
             self.cage_data = pickle.load(file)
 
         # disable all of the opening methods -- don't want to confuse anything
-        self.nev_entry['state'] = 'disabled'
-        self.nev_select['state'] = 'disabled'
-        self.emg_entry['state'] = 'disabled'
-        self.emg_select['state'] = 'disabled'
-        self.mot_entry['state'] = 'disabled'
-        self.mot_select['state'] = 'disabled'
-        self.exist_browse['state'] = 'disabled'
-        self.exist_entry['state'] = 'disabled'
-        self.exist_open['state'] = 'disabled'
-        self.convert_button['state'] = 'disabled'
+        self.load_toggle(enable=False)
+
+        # has anything been binned yet? if not, allow it
+        if not hasattr(self.cage_data, 'binned'):
+            self.bin_toggle(enable=True)
+        else:
+            self.bin_toggle(enable=False)
 
     # -------------------------
     def bin_data(self): # just runs the cage_data.bin_data function, turns off some stuff
@@ -273,13 +299,100 @@ class cage_data_gui(tk.Frame):
 
 
         predict_button = ttk.Button(options_window, text='Build Decoder',\
-            command=self.cage_data.filter_builder(out_type=predict_selection.get(),\
+            command=self.predict_button_run(out_type=predict_selection.get(),\
                 n_lags=int(lag_entry.get()), nonlinearity=nl_var.get()))
         predict_button.grid(row=3, column=0, padx=5, pady=5)
-        
-        
-            
 
+
+    # to store all of the models etc inside of the class
+    # didn't do this on the cage_data side of things to make it more generalizable 
+    def predict_button_run(self, out_type, n_lags, nonlinearity):
+        # predictions
+        outputs = self.cage_data.filter_builder(out_type=out_type, n_lags=n_lags, nonlinearity=nonlinearity)
+
+        # parse out the data 
+        self.decoder = outputs[0]
+        
+        # do we have a nonlinearity? If so...
+        if nonlinearity:
+            self.nonlinearity_coeff = outputs[0]
+            self.nonlinearity_type = nonlinearity
+            train_vafs = outputs[2]
+            test_vafs = outputs[3]
+        else:
+            train_vafs = outputs[1]
+            test_vafs = outputs[2]
+
+
+        # plot it
+        self.plot_VAFs(train_vafs, test_vafs, self.cage_data['binned'][out_type])
+
+
+        
+        
+
+    # ------------------------------------------------------------------------
+    # plotting stuff
+
+    # predictions
+    def plot_predictions(self, predictions, actual, timestamps, labels):
+        n_axes = int(predictions.shape[1]) # one for each row
+
+        # create the figure and axes
+        fig,ax = plt.subplots(nrows=n_axes, sharex=True)
+
+        # for each prediction/actual combination
+        for ii in np.arange(n_axes):
+            ax[ii].plot(timestamps, actual[:,ii], label='Recorded Value')
+            ax[ii].plot(timestamps, predictions[:,ii], label='Predicted Value')
+            ax[ii].set_title(labels[ii]) # label the axis
+            _ = ax[ii].legend()
+
+            # turn off the spines
+            for spine in ['right','top','bottom','left']:
+                ax[ii].spines[spine].set_visible(False)
+
+
+
+
+
+    # plot them vafs
+    def plot_VAFs(self, train_vaf, test_vaf, labels):
+        # plotting the test vs train vafs
+        fig_vaf, ax_vaf = plt.subplots()
+        i_preds = np.arange(len(labels))
+        bar_width = .3
+
+        ax_vaf.bar(i_preds, train_vaf, label='Training VAF')
+        ax_vaf.bar(i_preds + bar_width, test_vaf, label='Testing VAF')
+
+        # set the tick labels
+        ax_vaf.set_xticks(i_preds + .5*bar_width)
+        ax_vaf.set_xticklabels(labels)
+
+        # some general cleaning
+        ax_vaf.set_ylim([-.05, 1.05])
+        ax_vaf.set_ylabel('Coefficient of Determination')
+
+        ax_vaf.legend()
+
+        # for each bar in the chart, add a label of the VAF
+        for bar in ax_vaf.patches:
+            # value is the height.
+            bar_value = bar.get_height()
+            # format to two sig figs
+            text = f'{bar_value:.02f}'
+            # middle of that particular bar horizontally
+            text_x = bar.get_x() + bar_width/2
+            # vertical, height of the value unless it's negative
+            text_y = np.max([bar.get_y() + bar_value, 0.01])
+            bar_color = bar.get_facecolor()
+            ax_vaf.text(text_x, text_y, text, ha='center', va='bottom', color=bar_color, size=12)
+
+        
+        # turn off spines
+        for spine in ['right','top','bottom','left']:
+            ax_vaf.spines[spine].set_visible(False)
 
 
 
@@ -305,21 +418,10 @@ class cage_data_gui(tk.Frame):
     # -------------------------
     def reinit_cage_data(self):
         # reinitialize file selection
-        self.nev_fn.set('')
-        self.nev_select['state'] = 'normal'
-        self.emg_fn.set('')
-        self.emg_select['state'] = 'normal'
-        self.mot_fn.set('')
-        self.mot_select['state'] = 'normal'
-        self.convert_button['state'] = 'normal'
-        self.exist_browse['state'] = 'normal'
-        self.exist_entry['state'] = 'normal'
-        self.exist_open['state'] = 'normal'
+        self.load_toggle(enable=True)
         
         # binning data
-        self.bin_size.set('')
-        self.bin_size_txt['state'] = 'disabled'
-        self.bin_button['state'] = 'disabled'
+        self.bin_toggle(enable=False)
 
         # plot data
         self.raw_plot_button['state'] = 'disabled'

@@ -645,8 +645,7 @@ class cage_data:
             temp = np.zeros((self.binned['timeframe'].shape[0], self.mot_data.shape[1])) # set up an empty temp array
             offset = np.argmin((self.binned['timeframe']-self.mot_timestamps[0])**2) # find where the data starts
             temp[offset:offset+len(self.mot_data)] = self.mot_data # fill in everything beyond that point
-            temp[len(self.binned['timestamps']):] = [] # clip off everything that's too long
-            self.binned['mot_data'] = temp # store it
+            self.binned['mot_data'] = temp[:len(self.binned['timestamp']),:] # clip off everything that's too long, store it
 
         print('Data have been binned.')
 
@@ -1003,7 +1002,7 @@ class cage_data:
             out_type = 'filtered_EMG'
 
         # check that the desired "train-on" set is available
-        binned_list = [key for key in self.binned.keys() if key not in ['timeframe','spikes']]
+        binned_list = [key for key in self.binned.keys() if key not in ['timeframe','spikes'] and 'labels' not in key]
         if out_type not in binned_list:
             print(f"{out_type} not in binned data. This caged_data has only {binned_list}. Check for typos!")
             return -1
