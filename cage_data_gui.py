@@ -165,6 +165,13 @@ class cage_data_gui(tk.Frame):
         else:
             self.bin_size_txt['state'] = 'disabled'
             self.bin_button['state'] = 'disabled'
+    
+    # -------------------------
+    def decoder_toggle(self, enable=True):
+        if enable:
+            self.decoder_predict_button['state'] = 'normal'
+        else:
+            self.decoder_predict_button['state'] = 'disabled'
 
     # -------------------------
     def fn_update(self, box):
@@ -203,6 +210,8 @@ class cage_data_gui(tk.Frame):
         with open(self.exist_fn.get(), 'rb') as file:
             self.cage_data = pickle.load(file)
 
+        print(f"{self.exist_fn.get()} loaded")
+
         # disable all of the opening methods -- don't want to confuse anything
         self.load_toggle(enable=False)
 
@@ -211,6 +220,7 @@ class cage_data_gui(tk.Frame):
             self.bin_toggle(enable=True)
         else:
             self.bin_toggle(enable=False)
+            self.decoder_toggle(enable=True)
 
     # -------------------------
     def bin_data(self): # just runs the cage_data.bin_data function, turns off some stuff
@@ -218,9 +228,8 @@ class cage_data_gui(tk.Frame):
         self.cage_data.bin_data(bin_size=bin_sz)
 
         # enable buttons
-        self.bin_plot_button['state'] = 'normal' # turn on the plot buttons
-        self.decoder_predict_button['state'] = 'normal'
-        self.xval_predict_button['state'] = 'normal'
+        self.bin_toggle(enable=False)
+        self.decoder_toggle(enable=True)
 
 
 
@@ -267,9 +276,10 @@ class cage_data_gui(tk.Frame):
 
         # which data do you want to predict?
         signal_box = tk.LabelFrame(options_window)
-        binned_list = [keys for keys in self.cage_data.binned.keys() if keys not in ['spikes','timeframe']]
+        binned_list = [keys for keys in self.cage_data.binned.keys() if keys not in ['spikes','timeframe'] and 'label' not in keys]
         predict_radio = {}
         predict_selection = tk.Variable()
+        predict_selection.set(binned_list[0])
         row_locn = 0
         for binned in binned_list: # make a checkbox for each option
             predict_radio[binned] = ttk.Radiobutton(signal_box, text=binned, variable=predict_selection, value=binned)
@@ -280,8 +290,8 @@ class cage_data_gui(tk.Frame):
         # nonlinearity
         nl_box = tk.LabelFrame(options_window)
         nl_var = tk.Variable()
-        nl_var.set(None)
-        nl_none = ttk.Radiobutton(nl_box, text="None", variable=nl_var, value=None)
+        nl_var.set('poly')
+        nl_none = ttk.Radiobutton(nl_box, text="None", variable=nl_var, value=0)
         nl_none.grid(row=0,column=0, padx=5, pady=5)
         nl_poly = ttk.Radiobutton(nl_box, text="Polynomial", variable=nl_var, value='poly')
         nl_poly.grid(row=0, column=1, padx=5, pady=5)
@@ -296,11 +306,11 @@ class cage_data_gui(tk.Frame):
         lag_entry = ttk.Entry(options_window, textvariable=lag_var)
         lag_entry.grid(row=2, column=0, pady=5)
 
-
+        print(nl_var.get())
 
         predict_button = ttk.Button(options_window, text='Build Decoder',\
-            command=self.predict_button_run(out_type=predict_selection.get(),\
-                n_lags=int(lag_entry.get()), nonlinearity=nl_var.get()))
+            command=lambda:self.predict_button_run(out_type=predict_selection.get(),\
+                n_lags=int(lag_var.get()), nonlinearity=nl_var.get()))
         predict_button.grid(row=3, column=0, padx=5, pady=5)
 
 
@@ -423,9 +433,12 @@ class cage_data_gui(tk.Frame):
         # binning data
         self.bin_toggle(enable=False)
 
-        # plot data
-        self.raw_plot_button['state'] = 'disabled'
-        self.bin_plot_button['state'] = 'disabled'
+        # decoder
+        self.decoder_toggle(enable=False)
+
+        # # plot data
+        # self.raw_plot_button['state'] = 'disabled'
+        # self.bin_plot_button['state'] = 'disabled'
 
         self.save_button['state'] = 'disabled'
 

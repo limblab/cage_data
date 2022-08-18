@@ -167,7 +167,6 @@ class cage_data:
         self.is_EMG_filtered = False
         self.is_data_binned = False
         self.is_spike_smoothed = False
-        self.binned = {}
 
 
 
@@ -552,8 +551,8 @@ class cage_data:
             binned_spikes.append(out)
         
         # save it into the structure
-        self.binned['timeframe'] = bins[1:]            # times
-        self.binned['spikes'] = binned_spikes           # spiking firing rates
+        self.binned['timeframe'] = bins[1:]             # times
+        self.binned['spikes'] = np.array(binned_spikes).T # spiking firing rates
         self.binned['spikes_labels'] = self.elec_label  # labels
 
 
@@ -645,7 +644,7 @@ class cage_data:
             temp = np.zeros((self.binned['timeframe'].shape[0], self.mot_data.shape[1])) # set up an empty temp array
             offset = np.argmin((self.binned['timeframe']-self.mot_timestamps[0])**2) # find where the data starts
             temp[offset:offset+len(self.mot_data)] = self.mot_data # fill in everything beyond that point
-            self.binned['mot_data'] = temp[:len(self.binned['timestamp']),:] # clip off everything that's too long, store it
+            self.binned['mot_data'] = temp[:len(self.binned['timeframe']),:] # clip off everything that's too long, store it
 
         print('Data have been binned.')
 
@@ -974,7 +973,7 @@ class cage_data:
 
     # --------------------------------         
     # Wiener filter -- allows for basic non-linearities 
-    def filter_builder(self, out_type='EMG', out_labels=None, n_lags=5, nonlinearity=None, train_length=.9):
+    def filter_builder(self, out_type='EMG', out_labels=None, n_lags=5, nonlinearity=None, train_size=.9):
         '''
         Builds a linear filter between binned threshold crossings and the 
         listed outputs. 
@@ -1002,7 +1001,7 @@ class cage_data:
             out_type = 'filtered_EMG'
 
         # check that the desired "train-on" set is available
-        binned_list = [key for key in self.binned.keys() if key not in ['timeframe','spikes'] and 'labels' not in key]
+        binned_list = [key for key in self.binned.keys() if key not in ['timeframe','spikes']]
         if out_type not in binned_list:
             print(f"{out_type} not in binned data. This caged_data has only {binned_list}. Check for typos!")
             return -1
@@ -1019,8 +1018,7 @@ class cage_data:
 
         # split into train/test sets based on the percentage given
         mdl = linear_model.LinearRegression()
-        train_neur, test_neur = model_selection.train_test_split(self.binned['spikes'])
-        train_out, test_out = model_selection.train_test_split(self.binned[out_type])
+        train_neur, test_neur, train_target, test_target = model_selection.train_test_split(self.binned['spikes'],self.binned[out_type], train_size=train_size)
 
         # add lags to the training and testing inputs
         wiener_train = np.zeros((train_neur.shape[0],train_neur.shape[1]*n_lags))
@@ -1033,7 +1031,7 @@ class cage_data:
 
 
         # build the model
-        mdl.fit(x=wiener_train, y=train_out)
+        mdl.fit(x=wiener_train, y=train_target)
 
         # predictions on testing set
         train_pred = mdl.predict(wiener_train)
@@ -1041,21 +1039,21 @@ class cage_data:
 
         # spit out the VAFs on the test set
         if not nonlinearity:
-            train_vafs = metrics.r2_score(train_out, train_pred, multioutput='raw_values')
-            test_vafs = metrics.r2_score(test_out, test_pred, multioutput='raw_values')
+            train_vafs = metrics.explained_variance_score(train_target, train_pred, multioutput='raw_values')
+            test_vafs = metrics.explained_variance_score(test_target, test_pred, multioutput='raw_values')
             return mdl, train_vafs, test_vafs
         
         # train any non-linearity
         mdl_nonlin = []
-        nonlin_pred = np.zeros(train_pred.shape)
+        # nonlin_pred = np.zeros(train_pred.shape)
 
         for ii in np.arange(train_pred.shape[1]): # for each individual signal
             mdl_nonlin[:,ii] = least_squares(self.non_linearity_residuals,\
-                 [0.1, 0.1, 0.1], args=(train_pred[:,ii],train_out[:,ii], nonlinearity)).x
+                 [0.1, 0.1, 0.1], args=(train_pred[:,ii],train_target[:,ii], nonlinearity)).x
             train_pred_nonlin = self.non_linearity(mdl_nonlin[:,ii], train_pred[:,ii], nonlinear_type=nonlinearity)
             test_pred_nonlin = self.non_linearity(mdl_nonlin[:,ii], test_pred[:,ii], nonlinear_type=nonlinearity)
-            train_vafs = metrics.r2_score(train_out[:,ii], train_pred_nonlin, multioutput='raw_values')
-            test_vafs = metrics.r2_score(test_out[:,ii], test_pred_nonlin, multioutput='raw_values')
+            train_vafs = metrics.explained_variance_score(train_target[:,ii], train_pred_nonlin, multioutput='raw_values')
+            test_vafs = metrics.explained_variance_score(test_target[:,ii], test_pred_nonlin, multioutput='raw_values')
 
 
         return mdl, mdl_nonlin, train_vafs, test_vafs
