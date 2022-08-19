@@ -1,3 +1,5 @@
+from math import trunc
+from tkinter import W
 import numpy as np
 import _pickle as pickle
 import time
@@ -471,7 +473,7 @@ class cage_data:
 
 
             # bring in all of the data
-            col_headers = mot_file.readline() # column headers
+            col_headers = mot_file.readline().split()[1:] # column headers
             data = np.array([line.split('\t') for line in mot_file.readlines()], dtype=float) # the rest of the file parsed into a numpy array
 
             if data.shape != (n_rows,n_cols):
@@ -570,7 +572,7 @@ class cage_data:
                 temp = np.asarray(temp)
                 down_sampled.append(temp)
             print('Filtered EMGs have been downsampled')
-            self.binned['filtered_EMG'] = down_sampled
+            self.binned['filtered_EMG'] = np.array(down_sampled).T
             # return down_sampled
         else:
             print('Filter EMG first!')
@@ -628,11 +630,9 @@ class cage_data:
         if self.has_EMG == 1:
             # self.binned['filtered_EMG'] = self.EMG_downsample(1/bin_size)
             self.EMG_downsample(1/bin_size)
-            truncated_len = min(len(self.binned['filtered_EMG'][0]), len(self.binned['spikes'][0]))
-            for (i, each) in enumerate(self.binned['spikes']):
-                self.binned['spikes'][i] = each[:truncated_len]
-            for (i, each) in enumerate(self.binned['filtered_EMG']):
-                self.binned['filtered_EMG'][i] = each[:truncated_len]
+            truncated_len = min(self.binned['filtered_EMG'].shape[0], self.binned['spikes'].shape[0])
+            self.binned['spikes'] = self.binned['spikes'][:truncated_len,:]
+            self.binned['filtered_EMG'] = self.binned['filtered_EMG'][:truncated_len,:]
             self.binned['timeframe'] = self.binned['timeframe'][:truncated_len]
 
         if 'FSR_data' in self.analog: # might have analog but not FSR. making it specific
@@ -645,6 +645,7 @@ class cage_data:
             offset = np.argmin((self.binned['timeframe']-self.mot_timestamps[0])**2) # find where the data starts
             temp[offset:offset+len(self.mot_data)] = self.mot_data # fill in everything beyond that point
             self.binned['mot_data'] = temp[:len(self.binned['timeframe']),:] # clip off everything that's too long, store it
+            self.binned['mot_data_labels'] = self.mot_names
 
         print('Data have been binned.')
 
@@ -973,7 +974,7 @@ class cage_data:
 
     # --------------------------------         
     # Wiener filter -- allows for basic non-linearities 
-    def filter_builder(self, out_type='EMG', out_labels=None, n_lags=5, nonlinearity=None, train_size=.9):
+    def filter_builder(self, out_type='EMG', out_labels=None, n_lags=5, nonlinearity='linear', train_size=.9):
         '''
         Builds a linear filter between binned threshold crossings and the 
         listed outputs. 
@@ -1007,11 +1008,13 @@ class cage_data:
             return -1
 
         # make sure the linearity flag is correct
-        if nonlinearity not in [None, 'poly', 'Poly', 'exp', 'Exp']:
+        if nonlinearity not in [None, 'linear', 'poly', 'Poly', 'exp', 'Exp']:
             if nonlinearity in ['Poly','Polynomial','polynomial']:
                 nonlinearity = 'poly'
             elif nonlinearity in ['Exp','exponential','Exponential']:
                 nonlinearity = 'exp'
+            elif nonlinearity == 'linear':
+                nonlinearity='linear'
             else:
                 print(f"nonlinearity value {nonlinearity} is not supported")
                 return -1
@@ -1021,60 +1024,62 @@ class cage_data:
         train_neur, test_neur, train_target, test_target = model_selection.train_test_split(self.binned['spikes'],self.binned[out_type], train_size=train_size)
 
         # add lags to the training and testing inputs
-        wiener_train = np.zeros((train_neur.shape[0],train_neur.shape[1]*n_lags))
-        wiener_test = np.zeros((test_neur.shape[0],test_neur.shape[1]*n_lags))
-        for ii in np.arange(n_lags):
-            ind_start = ii*train_neur.shape[1]
-            ind_end = (ii+1)*train_neur.shape[1]
-            wiener_train[ii:,ind_start:ind_end] = train_neur[:ii] # training set
-            wiener_test[ii:,ind_start:ind_end] = test_neur[:ii] # test set
+        wiener_train = train_neur
+        wiener_test = test_neur
+        for ii in np.arange(1,n_lags):
+            wiener_train = np.append(wiener_train, np.pad(train_neur[:-ii,:],[[ii,0],[0,0]]),axis=1) # training set
+            wiener_test = np.append(wiener_test, np.pad(test_neur[:-ii,:],[[ii,0],[0,0]]),axis=1) # test set
 
 
         # build the model
-        mdl.fit(x=wiener_train, y=train_target)
+        mdl.fit(wiener_train, train_target)
 
         # predictions on testing set
         train_pred = mdl.predict(wiener_train)
         test_pred = mdl.predict(wiener_test)
 
         # spit out the VAFs on the test set
-        if not nonlinearity:
+        if nonlinearity == 'linear':
             train_vafs = metrics.explained_variance_score(train_target, train_pred, multioutput='raw_values')
             test_vafs = metrics.explained_variance_score(test_target, test_pred, multioutput='raw_values')
-            return mdl, train_vafs, test_vafs
+            return mdl, train_vafs, test_vafs 
         
         # train any non-linearity
-        mdl_nonlin = []
-        # nonlin_pred = np.zeros(train_pred.shape)
+        mdl_nonlin = np.ndarray((3,train_pred.shape[1]))
+        train_pred_nonlin = np.zeros(train_pred.shape)
+        test_pred_nonlin = np.zeros(test_pred.shape)
 
         for ii in np.arange(train_pred.shape[1]): # for each individual signal
             mdl_nonlin[:,ii] = least_squares(self.non_linearity_residuals,\
                  [0.1, 0.1, 0.1], args=(train_pred[:,ii],train_target[:,ii], nonlinearity)).x
-            train_pred_nonlin = self.non_linearity(mdl_nonlin[:,ii], train_pred[:,ii], nonlinear_type=nonlinearity)
-            test_pred_nonlin = self.non_linearity(mdl_nonlin[:,ii], test_pred[:,ii], nonlinear_type=nonlinearity)
-            train_vafs = metrics.explained_variance_score(train_target[:,ii], train_pred_nonlin, multioutput='raw_values')
-            test_vafs = metrics.explained_variance_score(test_target[:,ii], test_pred_nonlin, multioutput='raw_values')
-
+            train_pred_nonlin[:,ii] = self.non_linearity(mdl_nonlin[:,ii], train_pred[:,ii], nonlinear_type=nonlinearity)
+            test_pred_nonlin[:,ii] = self.non_linearity(mdl_nonlin[:,ii], test_pred[:,ii], nonlinear_type=nonlinearity)
+        
+        train_vafs = metrics.explained_variance_score(train_target, train_pred_nonlin, multioutput='raw_values')
+        test_vafs = metrics.explained_variance_score(test_target, test_pred_nonlin, multioutput='raw_values')
 
         return mdl, mdl_nonlin, train_vafs, test_vafs
     
 
     # using scipy's least_squares:
-    def non_linearity(coeff, y_train, nonlinear_type):
+    def non_linearity(self, coeff, y_train, nonlinear_type):
         """
         calculates nonlinear predictions for either polynomial or exponential nonlinearities
         """
         if nonlinear_type == 'poly':
             return coeff[0] + coeff[1]*y_train + coeff[2]*y_train**2
-        elif nonlinear_type == 'exponential':
+        elif nonlinear_type == 'exp':
             return coeff[0]*np.exp(coeff[1]*y_train) + coeff[2]
         else:
             return -1
 
-    def non_linearity_residuals(coeff, y_pred, y_act, nonlinear_type):
+    def non_linearity_residuals(self, coeff, y_pred, y_act, nonlinear_type): 
+        # include self since it's a class method.
+        # should we move this outside of the class, and just define it either here
+        # or in the utilities?
         if nonlinear_type == 'poly':
             return y_act - (coeff[0] + coeff[1]*y_pred + coeff[2]*y_pred**2)
-        elif nonlinear_type == 'exponential':
+        elif nonlinear_type == 'exp':
             return y_act - (coeff[0]*np.exp(coeff[1]*y_pred) + coeff[2])
         else:
             return -1

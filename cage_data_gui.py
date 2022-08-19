@@ -291,7 +291,7 @@ class cage_data_gui(tk.Frame):
         nl_box = tk.LabelFrame(options_window)
         nl_var = tk.Variable()
         nl_var.set('poly')
-        nl_none = ttk.Radiobutton(nl_box, text="None", variable=nl_var, value=0)
+        nl_none = ttk.Radiobutton(nl_box, text="None", variable=nl_var, value='linear')
         nl_none.grid(row=0,column=0, padx=5, pady=5)
         nl_poly = ttk.Radiobutton(nl_box, text="Polynomial", variable=nl_var, value='poly')
         nl_poly.grid(row=0, column=1, padx=5, pady=5)
@@ -324,18 +324,38 @@ class cage_data_gui(tk.Frame):
         self.decoder = outputs[0]
         
         # do we have a nonlinearity? If so...
-        if nonlinearity:
-            self.nonlinearity_coeff = outputs[0]
-            self.nonlinearity_type = nonlinearity
-            train_vafs = outputs[2]
-            test_vafs = outputs[3]
-        else:
+        if nonlinearity == 'linear':
             train_vafs = outputs[1]
             test_vafs = outputs[2]
 
+        else:
+            self.nonlinearity_coeff = outputs[1]
+            self.nonlinearity_type = nonlinearity
+            train_vafs = outputs[2]
+            test_vafs = outputs[3]
+
+
+        for iter,output in enumerate(self.cage_data.binned[f"{out_type}_labels"]):
+            print(output)
+            print(f"\tTraining: {train_vafs[iter]}")
+            print(f"\tTesting: {test_vafs[iter]}")
+
+
+
+        # use the models to build the decoder
+        spikes = self.cage_data.binned['spikes']
+        wiener_input = spikes
+        for ii in np.arange(1,n_lags):
+            wiener_input = np.append(wiener_input, np.pad(spikes[:-ii,:],[[ii,0],[0,0]]), axis=1)
+        preds = self.decoder.predict(wiener_input)
+        if nonlinearity != 'linear':
+            preds = self.cage_data.non_linearity(self.nonlinearity_coeff, preds, self.nonlinearity_type)
+
+
 
         # plot it
-        self.plot_VAFs(train_vafs, test_vafs, self.cage_data['binned'][out_type])
+        self.plot_VAFs(train_vafs, test_vafs, self.cage_data.binned[f"{out_type}_labels"])
+        self.plot_predictions(preds, self.cage_data.binned[out_type], self.cage_data.binned['timeframe'], self.cage_data.binned[f"{out_type}_labels"])
 
 
         
@@ -346,21 +366,22 @@ class cage_data_gui(tk.Frame):
 
     # predictions
     def plot_predictions(self, predictions, actual, timestamps, labels):
-        n_axes = int(predictions.shape[1]) # one for each row
-
-        # create the figure and axes
-        fig,ax = plt.subplots(nrows=n_axes, sharex=True)
+        n_figs = int(predictions.shape[1]) # one for each row
 
         # for each prediction/actual combination
-        for ii in np.arange(n_axes):
-            ax[ii].plot(timestamps, actual[:,ii], label='Recorded Value')
-            ax[ii].plot(timestamps, predictions[:,ii], label='Predicted Value')
-            ax[ii].set_title(labels[ii]) # label the axis
-            _ = ax[ii].legend()
+        for ii in np.arange(n_figs):
+            fig,ax = plt.subplots()
+            ax.plot(timestamps, actual[:,ii], label='Recorded Value')
+            ax.plot(timestamps, predictions[:,ii], label='Predicted Value')
+            ax.set_title(labels[ii]) # label the axis
+            _ = ax.legend()
 
             # turn off the spines
             for spine in ['right','top','bottom','left']:
-                ax[ii].spines[spine].set_visible(False)
+                ax.spines[spine].set_visible(False)
+        
+            fig.show()
+        
 
 
 
@@ -373,8 +394,8 @@ class cage_data_gui(tk.Frame):
         i_preds = np.arange(len(labels))
         bar_width = .3
 
-        ax_vaf.bar(i_preds, train_vaf, label='Training VAF')
-        ax_vaf.bar(i_preds + bar_width, test_vaf, label='Testing VAF')
+        ax_vaf.bar(i_preds, train_vaf, label='Training VAF', width=bar_width)
+        ax_vaf.bar(i_preds + bar_width, test_vaf, label='Testing VAF', width=bar_width)
 
         # set the tick labels
         ax_vaf.set_xticks(i_preds + .5*bar_width)
@@ -398,13 +419,14 @@ class cage_data_gui(tk.Frame):
             text_y = np.max([bar.get_y() + bar_value, 0.01])
             bar_color = bar.get_facecolor()
             ax_vaf.text(text_x, text_y, text, ha='center', va='bottom', color=bar_color, size=12)
-
         
         # turn off spines
         for spine in ['right','top','bottom','left']:
             ax_vaf.spines[spine].set_visible(False)
 
+        fig_vaf.show()
 
+        
 
 
 
