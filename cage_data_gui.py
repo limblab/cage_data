@@ -275,7 +275,7 @@ class cage_data_gui(tk.Frame):
         options_window = tk.Toplevel(self) # pop up to chose the predicted signals
 
         # which data do you want to predict?
-        signal_box = tk.LabelFrame(options_window)
+        signal_box = tk.LabelFrame(options_window, text='Predicted Signal')
         binned_list = [keys for keys in self.cage_data.binned.keys() if keys not in ['spikes','timeframe'] and 'label' not in keys]
         predict_radio = {}
         predict_selection = tk.Variable()
@@ -285,10 +285,10 @@ class cage_data_gui(tk.Frame):
             predict_radio[binned] = ttk.Radiobutton(signal_box, text=binned, variable=predict_selection, value=binned)
             predict_radio[binned].grid(row=row_locn, column=0, pady=5)
             row_locn += 1 # for the next option
-        signal_box.grid(row=0, column=0, padx=10, pady=10)
+        signal_box.grid(row=0, column=0, padx=10, pady=10, columnspan=2)
 
         # nonlinearity
-        nl_box = tk.LabelFrame(options_window)
+        nl_box = tk.LabelFrame(options_window, text='Nonlinearity Type')
         nl_var = tk.Variable()
         nl_var.set('poly')
         nl_none = ttk.Radiobutton(nl_box, text="None", variable=nl_var, value='linear')
@@ -298,25 +298,30 @@ class cage_data_gui(tk.Frame):
         nl_exp = ttk.Radiobutton(nl_box, text="Exponential", variable=nl_var, value='exp')
         nl_exp.grid(row=0, column=2, padx=5, pady=5)
 
-        nl_box.grid(row=1, column=0, padx=10, pady=10)
+        nl_box.grid(row=1, column=0, padx=10, pady=10, columnspan=2)
 
         # num lags        
+        lag_label = ttk.Label(options_window, text="Number of Lags")
+        lag_label.grid(row=2, column=0, padx=5, pady=5)
         lag_var = tk.Variable()
         lag_var.set('5')
         lag_entry = ttk.Entry(options_window, textvariable=lag_var)
-        lag_entry.grid(row=2, column=0, pady=5)
+        lag_entry.grid(row=2, column=1, padx=10, pady=5)
 
-        print(nl_var.get())
+        # plot T/F
+        plot_var = tk.Variable()
+        plot_check = ttk.Checkbutton(options_window, text='Plot VAFs and Signals', variable=plot_var, onvalue=True, offvalue=False)
+        plot_check.grid(row=3, column=0, padx=5, pady=5, columnspan=2)
 
         predict_button = ttk.Button(options_window, text='Build Decoder',\
             command=lambda:self.predict_button_run(out_type=predict_selection.get(),\
-                n_lags=int(lag_var.get()), nonlinearity=nl_var.get()))
-        predict_button.grid(row=3, column=0, padx=5, pady=5)
+                n_lags=int(lag_var.get()), nonlinearity=nl_var.get(), plot=plot_var.get()))
+        predict_button.grid(row=4, column=0, padx=5, pady=5, columnspan=2)
 
 
     # to store all of the models etc inside of the class
     # didn't do this on the cage_data side of things to make it more generalizable 
-    def predict_button_run(self, out_type, n_lags, nonlinearity):
+    def predict_button_run(self, out_type, n_lags, nonlinearity, plot=False):
         # predictions
         outputs = self.cage_data.filter_builder(out_type=out_type, n_lags=n_lags, nonlinearity=nonlinearity)
 
@@ -354,8 +359,9 @@ class cage_data_gui(tk.Frame):
 
 
         # plot it
-        self.plot_VAFs(train_vafs, test_vafs, self.cage_data.binned[f"{out_type}_labels"])
-        self.plot_predictions(preds, self.cage_data.binned[out_type], self.cage_data.binned['timeframe'], self.cage_data.binned[f"{out_type}_labels"])
+        if plot:
+            self.plot_VAFs(train_vafs, test_vafs, self.cage_data.binned[f"{out_type}_labels"])
+            self.plot_predictions(preds, self.cage_data.binned[out_type], self.cage_data.binned['timeframe'], self.cage_data.binned[f"{out_type}_labels"])
 
 
         

@@ -1020,7 +1020,7 @@ class cage_data:
                 return -1
 
         # split into train/test sets based on the percentage given
-        mdl = linear_model.LinearRegression()
+        mdl = linear_model.LinearRegression(fit_intercept=True)
         train_neur, test_neur, train_target, test_target = model_selection.train_test_split(self.binned['spikes'],self.binned[out_type], train_size=train_size)
 
         # add lags to the training and testing inputs
