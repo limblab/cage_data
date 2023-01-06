@@ -42,7 +42,7 @@ def openfilecheck(open_mode, file_name='', file_ext='', file_type=''):
             #    if 'app' not in locals(): app = QApplication([])
             #    if not file_ext: file_type = 'All Files'
             #    file_name = QFileDialog.getOpenFileName(QFileDialog(), "Select File", getcwd(),
-                                                        file_type + " (*" + file_ext + ")")
+            #                                            file_type + " (*" + file_ext + ")")
 
         # Ensure file exists (really needed for users type entering)
         if path.isfile(file_name):
