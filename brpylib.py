@@ -511,43 +511,43 @@ class NevFile:
                                         'UnparsedData' : list(digiVals[digiPackets])}
 
         # comments + NeuroMotive events that are stored like comments
-        commentPackets = [idx for idx, element in enumerate(PacketID) if element == COMMENT_PACKET_ID]
-        if len(commentPackets) > 0 :
-            charSet = np.ndarray((nPackets,),'<B',rawdata,tsBytes+4,(self.basic_header['BytesInDataPackets'],))
-            tsStarted = np.ndarray((nPackets,),'<I',rawdata,tsBytes+6,(self.basic_header['BytesInDataPackets'],))
-            charSet = charSet[commentPackets]
-            charSetList = np.array([None] * len(charSet))
-            ANSIPackets = [idx for idx, element in enumerate(charSet) if element == CHARSET_ANSI]
-            if len(ANSIPackets) > 0 :
-                charSetList[ANSIPackets] = 'ANSI'
-            UTFPackets = [idx for idx, element in enumerate(charSet) if element == CHARSET_UTF]
-            if len(UTFPackets) > 0 :
-                charSetList[UTFPackets] = 'UTF '
+        # commentPackets = [idx for idx, element in enumerate(PacketID) if element == COMMENT_PACKET_ID]
+        # if len(commentPackets) > 0 :
+        #     charSet = np.ndarray((nPackets,),'<B',rawdata,tsBytes+4,(self.basic_header['BytesInDataPackets'],))
+        #     tsStarted = np.ndarray((nPackets,),'<I',rawdata,tsBytes+6,(self.basic_header['BytesInDataPackets'],))
+        #     charSet = charSet[commentPackets]
+        #     charSetList = np.array([None] * len(charSet))
+        #     ANSIPackets = [idx for idx, element in enumerate(charSet) if element == CHARSET_ANSI]
+        #     if len(ANSIPackets) > 0 :
+        #         charSetList[ANSIPackets] = 'ANSI'
+        #     UTFPackets = [idx for idx, element in enumerate(charSet) if element == CHARSET_UTF]
+        #     if len(UTFPackets) > 0 :
+        #         charSetList[UTFPackets] = 'UTF '
 
-            # need to transfer comments from neuromotive. identify region of interest (ROI) events...
-            ROIPackets = [idx for idx, element in enumerate(charSet) if element == CHARSET_ROI]
+        #     # need to transfer comments from neuromotive. identify region of interest (ROI) events...
+        #     ROIPackets = [idx for idx, element in enumerate(charSet) if element == CHARSET_ROI]
 
-            lcomment = self.basic_header['BytesInDataPackets']-tsBytes-10
-            comments = np.chararray((nPackets,lcomment), 1, False, rawdata, tsBytes + 10,(self.basic_header['BytesInDataPackets'], 1))
+        #     lcomment = self.basic_header['BytesInDataPackets']-tsBytes-10
+        #     comments = np.chararray((nPackets,lcomment), 1, False, rawdata, tsBytes + 10,(self.basic_header['BytesInDataPackets'], 1))
 
-            # extract only the "true" comments, distinct from ROI packets
-            trueComments = np.setdiff1d(list(range(0,len(commentPackets)-1)),ROIPackets)
-            trueCommentsidx = np.asarray(commentPackets)[trueComments]
-            textComments = comments[trueCommentsidx]
-            textComments[:,-1] = '$'
-            stringarray = textComments.tostring()
-            stringvector = stringarray.decode('latin-1')
-            stringvector = stringvector[0:-1]
-            validstrings = stringvector.replace('\x00','')
-            commentsFinal = validstrings.split('$')
+        #     # extract only the "true" comments, distinct from ROI packets
+        #     trueComments = np.setdiff1d(list(range(0,len(commentPackets)-1)),ROIPackets)
+        #     trueCommentsidx = np.asarray(commentPackets)[trueComments]
+        #     textComments = comments[trueCommentsidx]
+        #     textComments[:,-1] = '$'
+        #     stringarray = textComments.tostring()
+        #     stringvector = stringarray.decode('latin-1')
+        #     stringvector = stringvector[0:-1]
+        #     validstrings = stringvector.replace('\x00','')
+        #     commentsFinal = validstrings.split('$')
 
-            # Remove the ROI comments from the list
-            subsetInds = list(set(list(range(0, len(charSetList) - 1))) - set(ROIPackets))
+        #     # Remove the ROI comments from the list
+        #     subsetInds = list(set(list(range(0, len(charSetList) - 1))) - set(ROIPackets))
 
-            output['comments'] = {'TimeStamps' : list(ts[trueCommentsidx]),
-                                  'TimeStampsStarted' : list(tsStarted[trueCommentsidx]),
-                                  'Data' : commentsFinal,
-                                  'CharSet' : list(charSetList[subsetInds])}
+        #     output['comments'] = {'TimeStamps' : list(ts[trueCommentsidx]),
+        #                           'TimeStampsStarted' : list(tsStarted[trueCommentsidx]),
+        #                           'Data' : commentsFinal,
+        #                           'CharSet' : list(charSetList[subsetInds])}
 
         #     # parsing and outputing ROI events
         #     if len(ROIPackets) > 0:

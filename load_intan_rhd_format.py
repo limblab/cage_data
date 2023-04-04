@@ -69,7 +69,7 @@ def read_data(filename):
 
         data = {}
         if (header['version']['major'] == 1 and header['version']['minor'] >= 2) or (header['version']['major'] > 1):
-            data['t_amplifier'] = np.zeros(num_amplifier_samples, dtype=np.int)
+            data['t_amplifier'] = np.zeros(num_amplifier_samples, dtype=np.int_)
         else:
             data['t_amplifier'] = np.zeros(num_amplifier_samples, dtype=np.uint)
 
@@ -84,10 +84,10 @@ def read_data(filename):
         # the commented line below illustrates this for digital input data; the same can be done for digital out
         
         #data['board_dig_in_data'] = np.zeros([header['num_board_dig_in_channels'], num_board_dig_in_samples], dtype=np.uint)
-        data['board_dig_in_data'] = np.zeros([header['num_board_dig_in_channels'], num_board_dig_in_samples], dtype=np.bool)
+        data['board_dig_in_data'] = np.zeros([header['num_board_dig_in_channels'], num_board_dig_in_samples], dtype=np.bool_)
         data['board_dig_in_raw'] = np.zeros(num_board_dig_in_samples, dtype=np.uint)
         
-        data['board_dig_out_data'] = np.zeros([header['num_board_dig_out_channels'], num_board_dig_out_samples], dtype=np.bool)
+        data['board_dig_out_data'] = np.zeros([header['num_board_dig_out_channels'], num_board_dig_out_samples], dtype=np.bool_)
         data['board_dig_out_raw'] = np.zeros(num_board_dig_out_samples, dtype=np.uint)
 
         # Read sampled data from file.
