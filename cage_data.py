@@ -788,7 +788,26 @@ class cage_data:
                 behave_dict_all.append(behave_dict)
         return behave_dict_all
                 
-                
+    def scan_number_of_spike(self, C = 60000, F = 600):
+        """
+        To scan all channels to see if any channel has too many or too few spikes,
+        then print
+        """
+        L = np.array([len(each) for each in self.spikes])
+        idx_h = np.where(L>C)[0]
+        idx_l = np.where(L<F)[0]
+        print('=============================')
+        if len(idx_h)>0:
+            for each in idx_h:
+                print('Too many spikes on %s: %d'%(self.elec_label[each], L[each]))
+        else:
+            print('No channel has too many spikes')
+        if len(idx_l)>0:
+            for each in idx_l:
+                print('Too few spikes on %s: %d'%(self.elec_label[each], L[each]))
+        else:
+            print('No channel has too few spikes')
+        print('=============================')            
         
         
         
