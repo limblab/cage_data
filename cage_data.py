@@ -614,15 +614,16 @@ class cage_data:
     def EMG_art_rej_single_channel(self, data, k = 8, L = 8):
         #print('Rejecting high amplitude EMG artifacts on single channel.')
         c = np.where(abs(data)>k*np.std(data))[0]
-        idx = []
-        for each in c:
-            idx.append(list(np.arange(each-L, each+L)))
-        u_idx = sorted(set(idx[0]).union(*idx))
-        u_idx = np.asarray(u_idx)
-        over_idx = np.where(u_idx>len(data)-1)[0]
-        u_idx = list(np.delete(u_idx, over_idx))
-        subs = np.random.rand(len(u_idx))*np.std(data)
-        data[u_idx] = subs
+        if len(c)>0:
+            idx = []
+            for each in c:
+                idx.append(list(np.arange(each-L, each+L)))
+            u_idx = sorted(set(idx[0]).union(*idx))
+            u_idx = np.asarray(u_idx)
+            over_idx = np.where(u_idx>len(data)-1)[0]
+            u_idx = list(np.delete(u_idx, over_idx))
+            subs = np.random.rand(len(u_idx))*np.std(data)
+            data[u_idx] = subs
         return data             
 
     def get_elec_idx(self, elec_num):
@@ -809,6 +810,25 @@ class cage_data:
             print('No channel has too few spikes')
         print('=============================')            
         
+    def rethreshold(self, K):
+        """
+        K is a multiplier to get the new threshold
+        """
+        waveforms = self.waveforms
+        spikes = self.spikes
+        th = self.thresholds
+        new_th = [K*each for each in th]
+    
+        idx = []
+        for i in range(len(th)):
+            M = np.min(waveforms[i], axis = 1)
+            idx.append(np.where(M>new_th[i])[0])
         
+        waveforms_, spikes_ = [], []
+        for i in range(len(th)):
+            waveforms_.append(np.delete(waveforms[i], idx[i], axis = 0))
+            spikes_.append(np.delete(spikes[i], idx[i]))
+        self.waveforms = waveforms_
+        self.spikes = spikes_        
         
         

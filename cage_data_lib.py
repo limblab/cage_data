@@ -305,7 +305,7 @@ def pull_spike_EMG_from_behave_dict(behave_dict, EMG_idx = []):
     else:
         return spikes, EMG
 
-def find_non_drop_out(x, y, TR, TH = 1):
+def find_non_drop_out(x, y, TR, TH = 1, t = []):
     """
     A function to get the non-drop-out portion of the data
     x is the signal with potential dropouts, like spikes in the cage
@@ -314,7 +314,12 @@ def find_non_drop_out(x, y, TR, TH = 1):
     TR is a threshold to discard too short periods
     TH is a threshold to avoid the data right before or after drop-outs
     The outputs were lists.
+    t is optional. If t is empty, the function will skip it. If not, the function will find out the time stamps corresponding to non-drop-out segments
     """
+    if isinstance(x, list) == True:
+        x = np.array(x).T
+        y = np.array(y).T
+    
     s = np.sum(x, axis = 1)
     
     z = np.where(s == 0)[0]
@@ -333,17 +338,24 @@ def find_non_drop_out(x, y, TR, TH = 1):
     idx.insert(0, 0)
     idx_.append(len(s))
     
-    x_, y_ = [], []
+    x_, y_, t_ = [], [], []
     for each in zip(idx, idx_):
         x_.append(x[each[0]:each[1], :])
         y_.append(y[each[0]:each[1], :])
+        if len(t)>0:
+            t_.append(t[each[0]:each[1]])
     L = np.array([len(each) for each in x_])
     I = list(np.where(L<TR)[0])
     I.sort(reverse=True)
     for each in I:
         x_.pop(each)
         y_.pop(each)
-    return x_, y_    
+        if len(t_)>0:
+            t_.pop(each)
+    if len(t_)>0:
+        return x_, y_, t_
+    else:
+        return x_, y_    
     
     
     
